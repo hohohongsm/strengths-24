@@ -12,6 +12,7 @@
     -webkit-font-smoothing: antialiased; }
   #root { min-height: 100vh; }
   input, button, textarea { font-family: inherit; -webkit-appearance: none; }
+  input[type="checkbox"] { -webkit-appearance: checkbox; appearance: auto; }
   button { cursor: pointer; border: none; }
   .wrap { max-width: 560px; margin: 0 auto; padding: 0 18px; }
   .sky-star { animation: twinkle 6s ease-in-out infinite; }
@@ -133,6 +134,11 @@ async function api(action, payload) {
   return res.json();
 }
 function sanitize(code) { return String(code || "").trim(); }
+function makeId() {
+  if (window.crypto && window.crypto.randomUUID) return window.crypto.randomUUID();
+  return "r-" + Date.now() + "-" + Math.random().toString(36).slice(2, 10);
+}
+function sleep(ms) { return new Promise(function (res) { setTimeout(res, ms); }); }
 </script>
 <script>
 /* ====================== 앱 (React) ====================== */
@@ -209,17 +215,31 @@ function StartScreen(props) {
     if (!nick.trim()) { setErr("닉네임을 입력해 주세요."); return; }
     if (!agree) { setErr("결과 저장 안내에 동의해 주세요."); return; }
     setLoading(true);
-    try {
-      const r = await api("validate", { code: sanitize(code) });
-      if (r.ok && r.valid) {
-        props.onStart(sanitize(code), nick.trim());
-      } else {
+    // 통신·서버 오류일 때만 최대 2회 자동 재시도. 정상 응답(미등록 코드)은 재시도 안 함.
+    var attempts = 3; // 첫 시도 + 2회 재시도
+    var lastErr = false;
+    for (var i = 0; i < attempts; i++) {
+      try {
+        const r = await api("validate", { code: sanitize(code) });
+        // 서버 오류({ok:false})나 응답 없음 → catch로 보내 재시도
+        if (!r || r.ok !== true) throw new Error("server error");
+        // 정상 통신: valid로 판단
+        if (r.valid) {
+          setLoading(false);
+          props.onStart(sanitize(code), nick.trim());
+          return;
+        }
+        // 정상 응답이지만 미등록 코드 → 재시도하지 않고 즉시 안내
+        setLoading(false);
         setErr("등록되지 않은 진단코드입니다. 진행자에게 확인해 주세요.");
+        return;
+      } catch (e) {
+        lastErr = true;
+        if (i < attempts - 1) await sleep(500 + Math.floor(Math.random() * 1000));
       }
-    } catch (e) {
-      setErr("연결에 문제가 있습니다. 잠시 후 다시 시도해 주세요.");
     }
     setLoading(false);
+    if (lastErr) setErr("연결에 문제가 있습니다. 잠시 후 다시 시도해 주세요.");
   }
 
   const inputStyle = {
@@ -429,7 +449,7 @@ function CheckScreen(props) {
   return h("div", { className: "wrap", style: { padding: "26px 18px 40px" }, ref: topRef },
     h("h2", { style: { fontSize: 21, fontWeight: 700, margin: "0 0 8px" } }, "잠깐, 경험으로 확인해 볼까요?"),
     h("p", { style: { fontSize: 14.5, lineHeight: 1.6, color: "#5A615A", marginBottom: 8 } },
-      "응답에서 상대적으로 두드러진 강점 다섯 가지입니다. 각 강점이 실제 경험과 얼마나 연결되는지 살펴보면, 결과를 더 정확하게 이해할 수 있습니다."),
+      "응답에서 상대적으로 두드러진 상위 강점입니다. 각 강점이 실제 경험과 얼마나 연결되는지 살펴보면, 결과를 더 정확하게 이해할 수 있습니다."),
     h("p", { style: { fontSize: 12.5, color: "#9AA09A", marginBottom: 20 } },
       "이 응답은 강점 순위를 바꾸지 않습니다. 실제 경험과의 연결 정도만 함께 보여드립니다."),
 
@@ -489,6 +509,16 @@ function ResultScreen(props) {
   const checks = props.checks;
   const ranked = useMemo(function () { return rankStrengths(scores); }, [scores]);
   const close = useMemo(function () { return isCloseAtCut(scores); }, [scores]);
+  // 상위 강점과 동점인 강점이 더 있는지 (6개 상한으로 잘렸을 수 있음)
+  const hasHiddenTie = useMemo(function () {
+    if (!top5 || !top5.length) return false;
+    var lastCode = top5[top5.length - 1];
+    var lastScore = scores[lastCode];
+    var count = 0;
+    for (var i = 0; i < ranked.length; i++) if (ranked[i].score === lastScore) count++;
+    // 마지막 상위강점과 같은 점수인 강점이 top5에 안 든 게 있으면 true
+    return count > top5.filter(function (c) { return scores[c] === lastScore; }).length;
+  }, [top5, scores, ranked]);
   const [openCode, setOpenCode] = useState(top5[0]);
   const [showAll, setShowAll] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -496,24 +526,39 @@ function ResultScreen(props) {
   const [saveError, setSaveError] = useState(false);
   const savingRef = useRef(false);
 
-  async function save() {
-    if (savingRef.current || saved) return; // 중복 저장 방지
+  const ridRef = useRef(null);
+  if (ridRef.current === null) ridRef.current = makeId(); // 한 번만 생성, 재시도에도 동일
+
+  async function attemptSave() {
+    // 같은 responseId로 저장 → 서버가 중복이면 갱신
+    const r = await api("save", {
+      code: props.code, nick: props.nick, responseId: ridRef.current,
+      scores: scores, top5: top5, checks: checks
+    });
+    return r && r.ok;
+  }
+
+  async function save(isManual) {
+    if (savingRef.current || saved) return;
     savingRef.current = true;
     setSaving(true); setSaveError(false);
-    try {
-      const r = await api("save", {
-        code: props.code, nick: props.nick,
-        scores: scores, top5: top5, checks: checks
-      });
-      if (r && r.ok) { setSaved(true); }
-      else { setSaveError(true); }
-    } catch (e) {
-      setSaveError(true);
+    // 첫 시도는 즉시. 실패하면 1s·3s·6s(+무작위) 간격으로 최대 3회 자동 재시도.
+    const delays = [1000, 3000, 6000];
+    let ok = false;
+    for (let attempt = 0; attempt <= delays.length; attempt++) {
+      try {
+        ok = await attemptSave();
+        if (ok) break;
+      } catch (e) { ok = false; }
+      if (attempt < delays.length) {
+        await sleep(delays[attempt] + Math.floor(Math.random() * 800));
+      }
     }
+    if (ok) setSaved(true); else setSaveError(true);
     setSaving(false);
     savingRef.current = false;
   }
-  useEffect(function () { save(); }, []);
+  useEffect(function () { save(false); }, []);
 
   return h("div", { className: "wrap", style: { padding: "30px 18px 60px" } },
     h("div", { style: { fontSize: 12, letterSpacing: 3, color: "#8A918A", fontWeight: 600 } }, "나의 강점발견"),
@@ -523,7 +568,7 @@ function ResultScreen(props) {
     saved ? h("div", { style: { fontSize: 12, color: "#3E7C5A", marginBottom: 20 } }, "✓ 결과가 저장되었습니다")
       : saveError ? h("div", { style: { marginBottom: 20, padding: 12, background: "#F5EAE6", borderRadius: 10 } },
           h("div", { style: { fontSize: 13, color: "#B0492E", marginBottom: 8 } }, "결과가 아직 저장되지 않았습니다."),
-          h("button", { onClick: save, disabled: saving,
+          h("button", { onClick: function () { save(true); }, disabled: saving,
             style: { padding: "8px 16px", borderRadius: 8, background: "#3E6B52", color: "#fff", fontSize: 13, fontWeight: 600 } },
             saving ? "저장 중…" : "다시 저장하기"))
       : h("div", { style: { fontSize: 12, color: "#9AA09A", marginBottom: 20 } }, saving ? "저장 중…" : ""),
@@ -573,6 +618,11 @@ function ResultScreen(props) {
       marginTop: 4, marginBottom: 8, padding: 13, background: "#EEF1ED",
       borderRadius: 10, fontSize: 12.5, lineHeight: 1.55, color: "#5A615A"
     } }, "상위 강점들의 점수 차이가 크지 않습니다. 순위 자체보다, 이 강점들이 실제 경험에서 어떻게 나타나는지 살펴보는 것이 더 중요합니다.") : null,
+
+    hasHiddenTie ? h("div", { style: {
+      marginBottom: 8, padding: 13, background: "#EEF1ED",
+      borderRadius: 10, fontSize: 12.5, lineHeight: 1.55, color: "#5A615A"
+    } }, "같은 점수의 강점이 여러 개 있어, 일부 강점은 아래 전체 순위에서 함께 확인할 수 있습니다.") : null,
 
     /* 전체 24강점 보기 */
     h("div", { style: { marginTop: 22 } },
@@ -733,7 +783,7 @@ function AdminScreen(props) {
   }
 
   async function openCode(c) {
-    setSel(c); setRows(null); setLoading(true); setErr(""); setOpenNick(null);
+    setSel(c); setRows(null); setLoading(true); setErr(""); setOpenId(null);
     try {
       const r = await api("list", { pw: pw, code: c });
       if (r.ok) setRows(r.rows || []);
