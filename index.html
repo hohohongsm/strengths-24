@@ -642,7 +642,10 @@ function ResultScreen(props) {
           const w = Math.round((r.score / 5) * 100);
           return h("div", { key: r.code, style: { marginBottom: 10 } },
             h("div", { style: { display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 3 } },
-              h("span", null, h("span", { style: { color: "#B4B9B4", marginRight: 6 } }, i + 1), s.name),
+              h("span", null,
+                h("span", { style: { color: "#B4B9B4", marginRight: 6 } }, i + 1),
+                h("span", { style: { color: "#9AA09A", fontSize: 11.5, marginRight: 5 } }, s.virtue),
+                s.name),
               h("span", { style: { color: "#9AA09A" } }, r.score.toFixed(1))
             ),
             h("div", { style: { height: 7, background: "#EAEDE9", borderRadius: 99, overflow: "hidden" } },
@@ -679,7 +682,7 @@ function downloadResultPNG(nick, top5, checks) {
   ctx.fillStyle = "#2A2E2A"; ctx.font = "700 30px sans-serif";
   ctx.fillText(nick + " 님의 대표 강점", pad, 104);
   ctx.fillStyle = "#7A817A"; ctx.font = "400 15px sans-serif";
-  ctx.fillText("일상 속에 이미 있는 나의 강점", pad, 134);
+  ctx.fillText("나만의 탁월함으로 발전시킬 강점", pad, 134);
 
   let y = 196;
   top5.forEach(function (code, idx) {
@@ -691,11 +694,12 @@ function downloadResultPNG(nick, top5, checks) {
     ctx.fillStyle = "#fff"; ctx.font = "700 20px sans-serif";
     ctx.textAlign = "center"; ctx.fillText(idx + 1, pad + 20, y + 1);
     ctx.textAlign = "left";
-    // 강점명 (덕목 + 이름)
+    // 강점명 (덕목 + 이름) — 덕목 너비를 13px 상태에서 먼저 측정
     ctx.fillStyle = "#9AA09A"; ctx.font = "400 13px sans-serif";
+    var virtueW = ctx.measureText(s.virtue).width;
     ctx.fillText(s.virtue, pad + 58, y - 6);
     ctx.fillStyle = "#2A2E2A"; ctx.font = "700 23px sans-serif";
-    ctx.fillText(s.name, pad + 58 + ctx.measureText(s.virtue).width + 8, y - 4);
+    ctx.fillText(s.name, pad + 58 + virtueW + 8, y - 4);
     // 짧은 설명
     if (s.short) {
       ctx.fillStyle = "#5A615A"; ctx.font = "400 14px sans-serif";
