@@ -156,6 +156,23 @@ function makeId() {
   return "r-" + Date.now() + "-" + Math.random().toString(36).slice(2, 10);
 }
 function sleep(ms) { return new Promise(function (res) { setTimeout(res, ms); }); }
+// 완료 시각은 한 번만 기록하고, 표시할 때 한국 시간(UTC+9)으로 변환합니다.
+function formatKoreaTime(value) {
+  if (value == null || value === "") return "시각 정보 없음";
+  const n = new Date(value).getTime();
+  if (!isFinite(n) || n <= 0) return "시각 정보 없음";
+  const d = new Date(n + 9 * 60 * 60 * 1000);
+  function p(v) { return v < 10 ? "0" + v : String(v); }
+  return d.getUTCFullYear() + "." + p(d.getUTCMonth() + 1) + "." + p(d.getUTCDate())
+    + " " + p(d.getUTCHours()) + ":" + p(d.getUTCMinutes()) + ":" + p(d.getUTCSeconds()) + " (한국 시간)";
+}
+function participationLabel(kind) {
+  return kind === "retake" ? "재진단" : kind === "first" ? "첫 참여" : "이전 기록·미구분";
+}
+function groupBaseRows(rows) {
+  // 이름은 본인 확인 수단이 아닙니다. 같은 이름끼리 합치거나 최신 결과로 덮지 않습니다.
+  return (rows || []).filter(function (r) { return r.participation !== "retake"; });
+}
 </script>
 <script>
 /* ====================== 앱 (React) ====================== */
@@ -261,25 +278,37 @@ function StartScreen(props) {
   const [agree, setAgree] = useState(false);
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(false);
+  const [duplicateEntry, setDuplicateEntry] = useState(false);
+  const startingRef = useRef(false);
 
-  async function start() {
+  async function start(confirmedRetake) {
+    if (startingRef.current) return;
     setErr("");
     if (!code.trim()) { setErr("진단코드를 입력해 주세요."); return; }
     if (!nick.trim()) { setErr("닉네임을 입력해 주세요."); return; }
     if (!agree) { setErr("결과 저장 안내에 동의해 주세요."); return; }
+    if (code.trim().length > 40 || nick.trim().length > 40) { setErr("코드와 이름은 각각 40자 이내로 입력해 주세요."); return; }
+    const isRetake = confirmedRetake === true;
+    if (isRetake && !duplicateEntry) return;
+    startingRef.current = true;
     setLoading(true);
+    try {
     // 통신·서버 오류일 때만 최대 2회 자동 재시도. 정상 응답(미등록 코드)은 재시도 안 함.
     var attempts = 3; // 첫 시도 + 2회 재시도
     var lastErr = false;
     for (var i = 0; i < attempts; i++) {
       try {
-        const r = await api("validate", { code: sanitize(code) });
+        const r = await api("validate", { code: sanitize(code), nick: nick.trim(), entryVersion: 3 });
         // 서버 오류({ok:false})나 응답 없음 → catch로 보내 재시도
         if (!r || r.ok !== true) throw new Error("server error");
         // 정상 통신: valid로 판단
         if (r.valid) {
-          setLoading(false);
-          props.onStart(sanitize(code), nick.trim(), String(r.mode) === "72" ? "72" : "96");
+          if (!(Number(r.entryVersion) >= 3) || typeof r.nicknameExists !== "boolean") {
+            setErr("앱 업데이트가 아직 완료되지 않았습니다. 진행자에게 백엔드 배포 확인을 요청해 주세요.");
+            return;
+          }
+          if (r.nicknameExists && !isRetake) { setDuplicateEntry(true); return; }
+          props.onStart(sanitize(code), nick.trim(), String(r.mode) === "72" ? "72" : "96", isRetake ? "retake" : "first");
           return;
         }
         // 정상 응답이지만 미등록 코드 → 재시도하지 않고 즉시 안내
@@ -293,6 +322,7 @@ function StartScreen(props) {
     }
     setLoading(false);
     if (lastErr) setErr("연결에 문제가 있습니다. 잠시 후 다시 시도해 주세요.");
+    } finally { startingRef.current = false; setLoading(false); }
   }
 
   const inputStyle = {
@@ -347,13 +377,13 @@ function StartScreen(props) {
       } },
         h("label", { htmlFor: "sd-code", style: labelStyle }, "진단코드"),
         h("input", {
-          id: "sd-code", style: inputStyle, value: code, placeholder: "진행자가 안내한 코드",
-          onChange: function (e) { setCode(e.target.value); }
+          id: "sd-code", style: inputStyle, value: code, maxLength: 40, disabled: loading, placeholder: "진행자가 안내한 코드",
+          onChange: function (e) { setCode(e.target.value); setDuplicateEntry(false); setErr(""); }
         }),
         h("label", { htmlFor: "sd-nick", style: Object.assign({ display: "block", marginTop: 15 }, labelStyle) }, "닉네임"),
         h("input", {
-          id: "sd-nick", style: inputStyle, value: nick, placeholder: "결과 확인에 쓰일 이름",
-          onChange: function (e) { setNick(e.target.value); }
+          id: "sd-nick", style: inputStyle, value: nick, maxLength: 40, disabled: loading, placeholder: "결과 확인에 쓰일 이름",
+          onChange: function (e) { setNick(e.target.value); setDuplicateEntry(false); setErr(""); }
         }),
         h("label", { style: { display: "flex", alignItems: "flex-start", gap: 9, cursor: "pointer", marginTop: 15 } },
           h("input", {
@@ -361,15 +391,22 @@ function StartScreen(props) {
             onChange: function (e) { setAgree(e.target.checked); }
           }),
           h("span", { style: { fontSize: 12, lineHeight: 1.6, color: "#AEB6C4" } },
-            "응답 결과(닉네임, 강점별 점수, 상위 강점과 경험 확인 응답, 제출 시각)는 진행자 확인을 위해 저장되며, 활동이 끝난 뒤 진행자가 삭제합니다. 이에 동의합니다.")
+            "응답 결과(닉네임, 강점별 점수, 상위 강점과 경험 확인 응답, 완료·제출 시각, 문항형, 재진단 여부)는 진행자 확인을 위해 저장되며, 활동이 끝난 뒤 진행자가 삭제합니다. 이에 동의합니다.")
         )
       ),
 
       err ? h("div", { style: { color: "#F0A58C", fontSize: 14, marginTop: 14 } }, err) : null,
 
-      h("div", { style: { marginTop: 18 } },
+      duplicateEntry ? h("div", { role: "alert", style: { marginTop: 18, padding: 16, borderRadius: 12, border: "1px solid #D9B65E", background: "#202A3E", color: "#EEF1F7" } },
+        h("div", { style: { fontSize: 15, fontWeight: 700, marginBottom: 8 } }, "같은 이름으로 저장된 결과가 있습니다."),
+        h("p", { style: { fontSize: 13, lineHeight: 1.65, margin: "0 0 12px" } }, "이 코드로 다시 참여하는 경우에는 이전 기록을 남기고 재진단 결과를 추가합니다. 동명이인이라면 이름 뒤에 구분할 글자를 붙여주세요."),
+        h("div", { style: { display: "flex", flexWrap: "wrap", gap: 8 } },
+          h(Btn, { onClick: function () { start(true); }, disabled: loading, color: "#3E6B52", style: { flex: "1 1 180px", fontSize: 14 } }, loading ? "확인 중…" : "재진단으로 계속하기"),
+          h(Btn, { onClick: function () { setDuplicateEntry(false); document.getElementById("sd-nick").focus(); }, disabled: loading, color: "#4A566E", style: { flex: "1 1 110px", fontSize: 14 } }, "이름 바꾸기")),
+        h("p", { style: { fontSize: 11.5, lineHeight: 1.6, color: "#C3CAD8", marginBottom: 0 } }, "재진단 기록은 그룹 통계에서 제외됩니다. 이 선택은 본인 확인이나 이전 결과 조회 기능이 아닙니다.")
+      ) : h("div", { style: { marginTop: 18 } },
         h("button", {
-          onClick: start, disabled: loading,
+          onClick: function () { start(false); }, disabled: loading,
           style: {
             display: "block", width: "100%", padding: "15px", borderRadius: 12,
             fontSize: 16, fontWeight: 600, border: "none",
@@ -582,58 +619,102 @@ function ResultScreen(props) {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState(false);
   const savingRef = useRef(false);
+  const [resultNick, setResultNick] = useState(props.nick);
+  const [participation, setParticipation] = useState(props.participation === "retake" ? "retake" : "first");
+  const [nameConflict, setNameConflict] = useState(false);
+  const [nameDraft, setNameDraft] = useState(props.nick);
+  const [saveMessage, setSaveMessage] = useState("");
+  const completionRef = useRef(null);
+  if (completionRef.current === null) completionRef.current = props.completedAt || Date.now();
+  const completedAt = completionRef.current;
 
   const ridRef = useRef(null);
   if (ridRef.current === null) ridRef.current = makeId(); // 한 번만 생성, 재시도에도 동일
 
-  async function attemptSave() {
+  async function attemptSave(entry) {
     // 같은 responseId로 저장 → 서버가 중복이면 갱신
     const r = await api("save", {
-      code: props.code, nick: props.nick, responseId: ridRef.current,
-      scores: scores, top5: top5, checks: checks, mode: props.mode
+      code: props.code, nick: entry.nick, responseId: ridRef.current,
+      scores: scores, top5: top5, checks: checks, mode: props.mode,
+      completedAt: completedAt, participation: entry.participation, entryVersion: 3
     });
-    return r && r.ok;
+    return r;
   }
 
-  async function save(isManual) {
+  async function save(isManual, override) {
     if (savingRef.current || saved) return;
+    const entry = override || { nick: resultNick, participation: participation };
+    if (!entry.nick.trim() || entry.nick.trim().length > 40) {
+      setSaveMessage("이름은 1~40자로 입력해 주세요."); return;
+    }
     savingRef.current = true;
-    setSaving(true); setSaveError(false);
+    setSaving(true); setSaveError(false); setNameConflict(false); setSaveMessage("");
     // 첫 시도는 즉시. 실패하면 1s·3s·6s(+무작위) 간격으로 최대 3회 자동 재시도.
     const delays = [1000, 3000, 6000];
     let ok = false;
+    let conflict = false;
+    try {
     for (let attempt = 0; attempt <= delays.length; attempt++) {
       try {
-        ok = await attemptSave();
+        const r = await attemptSave(entry);
+        ok = !!(r && r.ok);
         if (ok) break;
+        if (r && r.error === "duplicate_name") {
+          conflict = true; setNameConflict(true); setNameDraft(entry.nick);
+          break; // 동시 시작한 동명이인: 응답을 유지한 채 선택을 요청합니다.
+        }
+        if (r && ["response_conflict", "invalid_completed_at", "invalid_participation"].indexOf(r.error) >= 0) {
+          setSaveMessage("저장 정보를 확인하지 못했습니다. 결과 이미지를 보관한 뒤 진행자에게 문의해 주세요."); break;
+        }
       } catch (e) { ok = false; }
       if (attempt < delays.length) {
         await sleep(delays[attempt] + Math.floor(Math.random() * 800));
       }
     }
-    if (ok) setSaved(true); else setSaveError(true);
-    setSaving(false);
-    savingRef.current = false;
+    if (ok) setSaved(true); else if (!conflict) setSaveError(true);
+    } finally { setSaving(false); savingRef.current = false; }
+  }
+  function resolveNameConflict(asRetake) {
+    const nextNick = asRetake ? resultNick : nameDraft.trim();
+    if (!nextNick || nextNick.length > 40) { setSaveMessage("이름은 1~40자로 입력해 주세요."); return; }
+    const nextKind = asRetake ? "retake" : "first";
+    setResultNick(nextNick); setParticipation(nextKind);
+    save(true, {nick: nextNick, participation: nextKind});
   }
   useEffect(function () { save(false); }, []);
   // 결과↔조합 뷰 전환 시 항상 화면 맨 위로 (조합 아래에서 돌아올 때 중간에 머무르지 않도록)
   useEffect(function () { window.scrollTo(0, 0); }, [view]);
+  useEffect(function () {
+    function warn(e) { e.preventDefault(); e.returnValue = ""; return ""; }
+    if (!saved) window.addEventListener("beforeunload", warn);
+    return function () { window.removeEventListener("beforeunload", warn); };
+  }, [saved]);
 
   // 조합 해석은 ResultScreen 내부 뷰로 전환 → ResultScreen이 언마운트되지 않아
   // responseId·저장상태가 유지되고 재저장이 일어나지 않는다.
   if (view === "combo")
-    return h(ComboScreen, { top5: top5, onBack: function () { setView("result"); } });
+    return h(ComboScreen, { top5: top5, completedAt: completedAt, mode: props.mode, onBack: function () { setView("result"); } });
 
   return h("div", { className: "wrap", style: { padding: "30px 18px 60px" } },
     h("div", { style: { fontSize: 12, letterSpacing: 3, color: "#8A918A", fontWeight: 600 } }, "나의 강점발견"),
-    h("h1", { style: { fontSize: 23, fontWeight: 700, margin: "8px 0 4px" } }, props.nick + " 님의 대표 강점"),
+    h("h1", { style: { fontSize: 23, fontWeight: 700, margin: "8px 0 4px" } }, resultNick + " 님의 대표 강점"),
     h("p", { style: { fontSize: 13.5, color: "#7A817A", marginBottom: 4 } },
       "나답게 발휘되는 강점과 활용 방향입니다."),
     h("div", { style: { fontSize: 11.5, color: "#9AA09A", marginBottom: 4 } },
-      props.mode === "72" ? "72문항 간편형" : "96문항 전체형"),
+      (props.mode === "72" ? "72문항 간편형" : "96문항 전체형") + " · " + participationLabel(participation)),
+    h("div", { style: { fontSize: 12, color: "#6A716A", marginBottom: 12 } }, "진단 완료: " + formatKoreaTime(completedAt)),
+    participation === "retake" ? h("p", { style: { fontSize: 12, color: "#7A817A", lineHeight: 1.6 } }, "이전 기록은 그대로 두고 새 결과를 추가합니다. 재진단 기록은 그룹 통계에 포함하지 않습니다.") : null,
     saved ? h("div", { style: { fontSize: 12, color: "#3E7C5A", marginBottom: 20 } }, "✓ 결과가 저장되었습니다")
+      : nameConflict ? h("div", { role: "alert", style: { marginBottom: 20, padding: 15, borderRadius: 10, background: "#FBF2E5", border: "1px solid #E4C694" } },
+          h("div", { style: { fontSize: 14, fontWeight: 700 } }, "응답하는 동안 같은 이름의 결과가 먼저 저장되었습니다."),
+          h("p", { style: { fontSize: 13, lineHeight: 1.65 } }, "입력한 응답과 완료 시각은 유지됩니다. 재진단이라면 그대로 추가하고, 동명이인이라면 이름을 바꿔 저장해 주세요."),
+          h(Btn, { onClick: function () { resolveNameConflict(true); }, disabled: saving, style: { fontSize: 14 } }, "재진단으로 저장하기"),
+          h("label", { htmlFor: "result-nick", style: { display: "block", fontSize: 12, marginTop: 13 } }, "다른 참가자와 구분할 이름"),
+          h("input", { id: "result-nick", value: nameDraft, maxLength: 40, disabled: saving, onChange: function (e) { setNameDraft(e.target.value); setSaveMessage(""); }, style: { width: "100%", fontSize: 16, padding: 11, margin: "6px 0 8px", borderRadius: 8, border: "1px solid #D2D6D1" } }),
+          h(Btn, { onClick: function () { resolveNameConflict(false); }, disabled: saving, color: "#4A514A", style: { fontSize: 14 } }, "바꾼 이름으로 저장하기"),
+          saveMessage ? h("p", { style: { fontSize: 12, color: "#B0492E" } }, saveMessage) : null)
       : saveError ? h("div", { style: { marginBottom: 20, padding: 12, background: "#F5EAE6", borderRadius: 10 } },
-          h("div", { style: { fontSize: 13, color: "#B0492E", marginBottom: 8 } }, "결과가 아직 저장되지 않았습니다."),
+          h("div", { style: { fontSize: 13, color: "#B0492E", marginBottom: 8 } }, saveMessage || "결과가 아직 저장되지 않았습니다."),
           h("button", { onClick: function () { save(true); }, disabled: saving,
             style: { padding: "8px 16px", borderRadius: 8, background: "#3E6B52", color: "#fff", fontSize: 13, fontWeight: 600 } },
             saving ? "저장 중…" : "다시 저장하기"))
@@ -726,17 +807,17 @@ function ResultScreen(props) {
 
     /* PNG 저장 */
     h("div", { style: { marginTop: 26 } },
-      h(Btn, { onClick: function () { downloadResultPNG(props.nick, top5, checks); }, color: "#4A514A" },
+      h(Btn, { onClick: function () { downloadResultPNG(resultNick, top5, checks, completedAt, props.mode, participation); }, color: "#4A514A" },
         "결과 이미지 저장하기")),
 
     h("div", { style: { marginTop: 28, fontSize: 12, color: "#9AA09A", lineHeight: 1.65 } },
-      "이 결과는 지금의 자기인식과 경험을 바탕으로 한 개인 내 강점 프로필입니다. 자기이해와 성장을 위한 자료로 활용하며, 채용·선발·평가나 임상적 판단을 위한 것이 아닙니다. 궁금한 점은 진행자와 함께 이야기해 보세요."),
+      "이 결과는 지금의 자기인식과 경험을 바탕으로 한 개인 내 강점 프로필입니다. 자기이해와 성장을 위한 자료로 활용하며, 채용·선발·평가나 임상적 판단을 위한 것이 아닙니다. 완료 시각은 기기 시각을 바탕으로 표시됩니다. 재진단 결과는 같은 문항형끼리 참고하고, 순위 변화만으로 성장이나 저하를 단정하지 마세요."),
     h(BrandMark, null)
   );
 }
 
 /* ---------- 결과 PNG ---------- */
-function downloadResultPNG(nick, top5, checks) {
+function downloadResultPNG(nick, top5, checks, completedAt, mode, participation) {
   const W = 720, pad = 48;
   const cv = document.createElement("canvas");
   const dpr = 2; cv.width = W * dpr;
@@ -753,6 +834,8 @@ function downloadResultPNG(nick, top5, checks) {
   ctx.fillText(nick + " 님의 대표 강점", pad, 104);
   ctx.fillStyle = "#7A817A"; ctx.font = "400 15px sans-serif";
   ctx.fillText("나만의 탁월함으로 발전시킬 강점", pad, 134);
+  ctx.fillStyle = "#6A716A"; ctx.font = "400 13px sans-serif";
+  ctx.fillText("진단 완료: " + formatKoreaTime(completedAt) + " · " + (mode === "72" ? "72문항" : "96문항") + " · " + participationLabel(participation || "first"), pad, 158);
 
   let y = 196;
   top5.forEach(function (code, idx) {
@@ -798,7 +881,9 @@ function downloadResultPNG(nick, top5, checks) {
     ctx.textAlign = "left";
   }
 
-  const filename = "강점발견_" + nick + ".png";
+  const stamp = formatKoreaTime(completedAt).replace(/[^0-9]/g, "");
+  const safeNick = nick.replace(/[\\/:*?"<>|\r\n]/g, "_");
+  const filename = "강점발견_" + safeNick + (stamp ? "_" + stamp : "") + ".png";
   cv.toBlob(function (blob) {
     const file = new File([blob], filename, { type: "image/png" });
     if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
@@ -890,7 +975,7 @@ function AdminScreen(props) {
     setSel(c); setSelMode(mode === "72" ? "72" : "96"); setRows(null); setLoading(true); setErr(""); setOpenId(null);
     try {
       const r = await api("list", { pw: pw, code: c });
-      if (r.ok) setRows(r.rows || []);
+      if (r.ok) setRows((r.rows || []).slice().sort(function (a, b) { return (b.completedAt || b.ts) - (a.completedAt || a.ts); }));
       else setErr("결과를 불러오지 못했습니다.");
     } catch (e) { setErr("결과를 불러오지 못했습니다."); }
     setLoading(false);
@@ -916,11 +1001,13 @@ function AdminScreen(props) {
     } catch (e) { setErr("일부 삭제에 실패했습니다."); }
   }
 
-  /* 그룹 집계: 각 강점이 상위5에 포함된 인원 */
+  const baseRows = useMemo(function () { return groupBaseRows(rows); }, [rows]);
+  const retakeCount = rows ? rows.length - baseRows.length : 0;
+  /* 그룹 집계: 재진단 표시 응답은 제외. 이름으로 동일인을 추정하지 않음. */
   const groupAgg = useMemo(function () {
-    if (!rows || !rows.length) return null;
+    if (!baseRows.length) return null;
     const cnt = {}; STRENGTHS.forEach(function (s) { cnt[s.code] = 0; });
-    rows.forEach(function (r) {
+    baseRows.forEach(function (r) {
       (r.top5 || []).forEach(function (c) { if (cnt[c] != null) cnt[c]++; });
     });
     const arr = STRENGTHS.map(function (s) {
@@ -928,16 +1015,14 @@ function AdminScreen(props) {
     }).filter(function (x) { return x.count > 0; })
       .sort(function (a, b) { return b.count - a.count; });
     return arr;
-  }, [rows]);
+  }, [baseRows]);
 
   function exportCSV() {
     if (!rows || !rows.length) return;
-    const header = ["닉네임", "제출시각", "문항형"].concat(STRENGTHS.map(function (s) { return s.name; }));
+    const header = ["응답ID", "닉네임", "진단완료시각(한국)", "최초저장시각(한국)", "문항형", "참여구분", "그룹통계포함"].concat(STRENGTHS.map(function (s) { return s.name; }));
     const lines = [header.join(",")];
     rows.forEach(function (r) {
-      const d = new Date(r.ts);
-      const ds = d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate()) + " " + pad2(d.getHours()) + ":" + pad2(d.getMinutes());
-      const row = [csvCell(r.nick), ds, (r.mode === "72" ? "72문항 간편형" : "96문항 전체형")];
+      const row = [csvCell(r.responseId), csvCell(r.nick), r.completedAt ? formatKoreaTime(r.completedAt) : "미기록", formatKoreaTime(r.ts), (r.mode === "72" ? "72문항 간편형" : "96문항 전체형"), participationLabel(r.participation), r.participation === "retake" ? "제외" : "포함"];
       STRENGTHS.forEach(function (s) {
         const v = r.scores && r.scores[s.code] != null ? r.scores[s.code].toFixed(2) : "";
         row.push(v);
@@ -1040,7 +1125,7 @@ function AdminScreen(props) {
     (sel && rows) ? h("div", null,
       h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", margin: "6px 0 14px" } },
         h("div", { style: { fontSize: 15, fontWeight: 700 } },
-          "'" + sel + "' 응답 " + rows.length + "명",
+          "'" + sel + "' 기록 " + rows.length + "건",
           h("span", { style: { marginLeft: 7, fontSize: 11, color: "#8A918A", fontWeight: 500 } },
             selMode === "72" ? "간편형 · 72문항" : "전체형 · 96문항")),
         rows.length ? h("div", { style: { display: "flex", gap: 8 } },
@@ -1050,15 +1135,18 @@ function AdminScreen(props) {
       ),
 
       rows.length === 0 ? h("div", { style: { fontSize: 13.5, color: "#9AA09A", padding: "10px 0" } }, "아직 응답이 없습니다.") : null,
+      rows.length ? h("div", { style: { fontSize: 12, color: "#6A716A", lineHeight: 1.7, marginBottom: 14 } },
+        "그룹 집계 " + baseRows.length + "건 · 재진단 " + retakeCount + "건 제외. 재진단 여부는 참가자가 선택한 값이며, 이름만으로 동일인을 판단하지 않습니다. 이전 버전의 미구분 기록은 기존처럼 집계합니다.") : null,
+      rows.length && !baseRows.length ? h("p", { style: { fontSize: 13, color: "#7A817A" } }, "현재 재진단 기록만 있어 그룹 통계는 표시하지 않습니다. 개별 결과는 아래에서 확인할 수 있습니다.") : null,
 
       /* 그룹 경향 */
       groupAgg ? h("div", { style: { background: "#fff", borderRadius: 12, padding: 16, marginBottom: 18, border: "1px solid #E8EAE7" } },
         h("div", { style: { fontSize: 14, fontWeight: 700, marginBottom: 4 } }, "그룹 강점 경향"),
         h("div", { style: { fontSize: 11.5, color: "#9AA09A", marginBottom: 14, lineHeight: 1.5 } },
-          "참여자 개인의 상위 강점에 포함된 빈도입니다. 집단 전체의 절대적 강점 수준이 아니라, 개인별 두드러진 강점을 모은 결과로 해석해 주세요."),
+          "재진단으로 표시하지 않은 응답의 상위 강점 포함 빈도입니다. 집단 전체의 절대적 강점 수준이 아니라, 응답별 두드러진 강점을 모은 결과로 해석해 주세요."),
         groupAgg.map(function (g, gi) {
           const color = VIRTUE_COLOR[g.virtue] || "#3E6B52";
-          const w = Math.round((g.count / rows.length) * 100);
+          const w = Math.round((g.count / baseRows.length) * 100);
           const sdef = (strengthByCode(g.code) || {}).def || "";
           // 경쟁 순위(1,1,3): 앞 항목과 빈도가 같으면 같은 순위, 다르면 현재 인덱스+1
           var rankNo = gi + 1;
@@ -1074,7 +1162,7 @@ function AdminScreen(props) {
               h("span", { style: { fontWeight: 700 } },
                 h("span", { style: { color: "#9AA09A", fontSize: 11.5, fontWeight: 600, marginRight: 6 } }, rankLabel),
                 g.name),
-              h("span", { style: { color: "#9AA09A", fontSize: 12 } }, rows.length + "명 중 " + g.count + "명 (" + w + "%)")
+              h("span", { style: { color: "#9AA09A", fontSize: 12 } }, baseRows.length + "건 중 " + g.count + "건 (" + w + "%)")
             ),
             sdef ? h("div", { style: { fontSize: 11.5, color: "#9AA09A", lineHeight: 1.5, marginBottom: 5 } }, sdef) : null,
             h("div", { style: { height: 8, background: "#EAEDE9", borderRadius: 99, overflow: "hidden" } },
@@ -1087,16 +1175,16 @@ function AdminScreen(props) {
       rows.map(function (r) {
         const open = openId === r.responseId;
         const ranked = rankStrengths(r.scores || {});
-        const d = new Date(r.ts);
-        const ds = d.getMonth() + 1 + "/" + d.getDate() + " " + (d.getHours() < 10 ? "0" : "") + d.getHours() + ":" + (d.getMinutes() < 10 ? "0" : "") + d.getMinutes();
+        const ds = (r.completedAt ? "진단 완료: " : "저장 시각: ") + formatKoreaTime(r.completedAt || r.ts);
         return h("div", { key: r.responseId, style: { background: "#fff", borderRadius: 12, marginBottom: 10, border: "1px solid #E8EAE7", overflow: "hidden" } },
           h("div", { style: { padding: "13px 15px", display: "flex", alignItems: "center", gap: 10 } },
-            h("button", { onClick: function () { setOpenId(open ? null : r.responseId); }, style: { flex: 1, textAlign: "left", background: "none" } },
+            h("button", { onClick: function () { setOpenId(open ? null : r.responseId); }, style: { flex: 1, minWidth: 0, textAlign: "left", background: "none", overflowWrap: "anywhere" } },
               h("div", { style: { fontSize: 15, fontWeight: 700 } }, r.nick),
+              h("div", { style: { fontSize: 11.5, color: r.participation === "retake" ? "#9A6B3E" : "#6A716A", marginTop: 4, lineHeight: 1.6 } }, (r.mode === "72" ? "72문항" : "96문항") + " · " + participationLabel(r.participation) + (r.participation === "retake" ? " · 그룹 집계 제외" : "")),
+              h("div", { style: { fontSize: 11, color: "#7A817A", marginTop: 3, lineHeight: 1.6 } }, ds),
               h("div", { style: { fontSize: 12, color: "#8A918A", marginTop: 3 } },
                 (r.top5 || []).map(function (c) { const s = strengthByCode(c); return s ? s.name : c; }).join(" · "))
             ),
-            h("span", { style: { fontSize: 11, color: "#B4B9B4" } }, ds),
             h("button", { onClick: function () { delOne(r.responseId, r.nick); }, style: { background: "none", color: "#CDB4AE", fontSize: 16 } }, "🗑"),
             h("button", { onClick: function () { setOpenId(open ? null : r.responseId); }, style: { background: "none", color: "#B4B9B4", fontSize: 12 } }, open ? "▲" : "▼")
           ),
@@ -1250,6 +1338,7 @@ function ComboScreen(props) {
   return h("div", { className: "wrap", style: { padding: "30px 18px 60px" } },
     h("div", { style: { fontSize: 12, letterSpacing: 3, color: "#8A918A", fontWeight: 600 } }, "나의 강점발견"),
     h("h1", { style: { fontSize: 22, fontWeight: 700, margin: "8px 0 4px" } }, "나의 상위 강점이 연결되는 방식"),
+    props.completedAt ? h("div", { style: { fontSize: 11.5, color: "#7A817A", lineHeight: 1.6, margin: "8px 0" } }, "진단 완료: " + formatKoreaTime(props.completedAt) + " · " + (props.mode === "72" ? "72문항" : "96문항")) : null,
     h("p", { style: { fontSize: 13.5, color: "#7A817A", marginBottom: 18, lineHeight: 1.6 } },
       "여러 강점이 함께 작동할 때 나타나는 모습입니다. 아래는 검토된 해석 문장으로, 실제 경험에 비추어 살펴보시면 도움이 됩니다."),
 
@@ -1301,10 +1390,13 @@ function App() {
   const [scores, setScores] = useState(null);
   const [top5, setTop5] = useState(null);
   const [checks, setChecks] = useState(null);
+  const [participation, setParticipation] = useState("first");
+  const [completedAt, setCompletedAt] = useState(null);
 
-  function onStart(c, n, selectedMode) {
+  function onStart(c, n, selectedMode, kind) {
     var m = selectedMode === "72" ? "72" : "96";
     setCode(c); setNick(n); setMode(m);
+    setParticipation(kind === "retake" ? "retake" : "first"); setCompletedAt(null);
     setItems(shuffleSpread(questionItemsForMode(m)));
     setScreen("quiz");
   }
@@ -1316,7 +1408,7 @@ function App() {
     setAnswers(ans); setScores(sc); setTop5(t5); setScreen("check");
   }
 
-  function onCheckDone(chk) { setChecks(chk); setScreen("result"); }
+  function onCheckDone(chk) { setChecks(chk); setCompletedAt(Date.now()); setScreen("result"); }
 
   // 진단 진행 중(문항/경험확인) 새로고침·창닫기 경고
   useEffect(function () {
@@ -1333,7 +1425,7 @@ function App() {
   if (screen === "check")
     return h(CheckScreen, { top5: top5, onDone: onCheckDone });
   if (screen === "result")
-    return h(ResultScreen, { code: code, nick: nick, mode: mode, scores: scores, top5: top5, checks: checks, saved: false });
+    return h(ResultScreen, { code: code, nick: nick, mode: mode, scores: scores, top5: top5, checks: checks, participation: participation, completedAt: completedAt, saved: false });
   return h(StartScreen, { onStart: onStart, onAdmin: function () { setScreen("admin"); } });
 }
 
