@@ -44,6 +44,23 @@ const CHECK_LABELS = [
   { key: "repeat",  q: "한 번이 아니라 여러 상황에서 반복해서 나타난다." }
 ];
 const CHECK_OPTIONS = ["그렇지 않다", "어느 정도 그렇다", "매우 그렇다"]; // 0,1,2
+/* 72문항 간편형: 강점별 정방향 2문항 + 역방향 1문항을 유지합니다.
+   아래 24개 문항만 제외하며, 96문항 전체형의 원본 문항은 그대로 보존합니다. */
+const SHORT_EXCLUDE_IDS = [
+  "W01-3","W02-3","W03-1","W04-1","W05-3",
+  "C01-3","C02-1","C03-1","C04-3",
+  "H01-1","H02-2","H03-2",
+  "J01-2","J02-1","J03-1",
+  "T01-3","T02-3","T03-1","T04-1",
+  "X01-3","X02-1","X03-1","X04-1","X05-1"
+];
+const SHORT_EXCLUDE_SET = {};
+SHORT_EXCLUDE_IDS.forEach(function (id) { SHORT_EXCLUDE_SET[id] = true; });
+function questionItemsForMode(mode) {
+  if (String(mode) !== "72") return QITEMS.slice();
+  return QITEMS.filter(function (q) { return !SHORT_EXCLUDE_SET[q.id]; });
+}
+
 </script>
 <script>
 /* ====================== 데이터 (문항 + 결과 문안) ====================== */
@@ -155,25 +172,27 @@ function shuffle(arr) {
   return a;
 }
 function shuffleSpread(arr) {
-  function tooClose(list) {
-    for (let i = 1; i < list.length; i++)
-      if (list[i].code === list[i - 1].code) return true;
-    return false;
-  }
-  let best = shuffle(arr);
-  for (let attempt = 0; attempt < 40 && tooClose(best); attempt++) best = shuffle(arr);
-  for (let i = 1; i < best.length; i++) {
-    if (best[i].code === best[i - 1].code) {
-      for (let j = i + 1; j < best.length; j++) {
-        if (best[j].code !== best[i - 1].code &&
-            (j + 1 >= best.length || best[j + 1].code !== best[i].code) &&
-            best[j].code !== (best[i + 1] ? best[i + 1].code : null)) {
-          const t = best[i]; best[i] = best[j]; best[j] = t; break;
-        }
-      }
+  // 강점별 문항을 먼저 섞고, 한 순환에 각 강점 문항을 하나씩 배치합니다.
+  // 72·96문항형 모두 같은 강점이 연속해서 나오는 일을 구조적으로 막습니다.
+  const buckets = {};
+  arr.forEach(function (q) {
+    if (!buckets[q.code]) buckets[q.code] = [];
+    buckets[q.code].push(q);
+  });
+  const codes = Object.keys(buckets);
+  codes.forEach(function (c) { buckets[c] = shuffle(buckets[c]); });
+  const rounds = codes.reduce(function (m, c) { return Math.max(m, buckets[c].length); }, 0);
+  const out = [];
+  let previousCode = null;
+  for (let round = 0; round < rounds; round++) {
+    const available = shuffle(codes.filter(function (c) { return buckets[c][round]; }));
+    if (available.length > 1 && available[0] === previousCode) {
+      const t = available[0]; available[0] = available[1]; available[1] = t;
     }
+    available.forEach(function (c) { out.push(buckets[c][round]); });
+    if (available.length) previousCode = available[available.length - 1];
   }
-  return best;
+  return out;
 }
 
 /* ---------- 공통 UI ---------- */
@@ -226,7 +245,7 @@ function StartScreen(props) {
         // 정상 통신: valid로 판단
         if (r.valid) {
           setLoading(false);
-          props.onStart(sanitize(code), nick.trim());
+          props.onStart(sanitize(code), nick.trim(), String(r.mode) === "72" ? "72" : "96");
           return;
         }
         // 정상 응답이지만 미등록 코드 → 재시도하지 않고 즉시 안내
@@ -327,7 +346,7 @@ function StartScreen(props) {
       ),
 
       h("div", { style: { marginTop: 22, fontSize: 11.5, color: "#8E96A6", lineHeight: 1.65 } },
-        "약 10~12분 정도 걸립니다. 최근 6개월 동안 여러 상황에서 반복적으로 나타난 실제 모습을 기준으로, 되고 싶은 모습보다 지금의 나에 가까운 답을 골라 주세요."),
+        "진단코드에 따라 약 7~12분 정도 걸립니다. 최근 6개월 동안 여러 상황에서 반복적으로 나타난 실제 모습을 기준으로, 되고 싶은 모습보다 지금의 나에 가까운 답을 골라 주세요."),
 
       h("div", { style: { marginTop: 34, textAlign: "center" } },
         h("button", {
@@ -342,7 +361,7 @@ function StartScreen(props) {
 const PER_PAGE = 6; // 한 화면 6문항
 
 function QuizScreen(props) {
-  const items = props.items; // 셔플된 96문항
+  const items = props.items; // 진단코드의 문항형에 따라 셔플된 96문항 또는 72문항
   const [page, setPage] = useState(0);
   const [answers, setAnswers] = useState({});
   const totalPages = Math.ceil(items.length / PER_PAGE);
@@ -536,7 +555,7 @@ function ResultScreen(props) {
     // 같은 responseId로 저장 → 서버가 중복이면 갱신
     const r = await api("save", {
       code: props.code, nick: props.nick, responseId: ridRef.current,
-      scores: scores, top5: top5, checks: checks
+      scores: scores, top5: top5, checks: checks, mode: props.mode
     });
     return r && r.ok;
   }
@@ -575,6 +594,8 @@ function ResultScreen(props) {
     h("h1", { style: { fontSize: 23, fontWeight: 700, margin: "8px 0 4px" } }, props.nick + " 님의 대표 강점"),
     h("p", { style: { fontSize: 13.5, color: "#7A817A", marginBottom: 4 } },
       "나답게 발휘되는 강점과 활용 방향입니다."),
+    h("div", { style: { fontSize: 11.5, color: "#9AA09A", marginBottom: 4 } },
+      props.mode === "72" ? "72문항 간편형" : "96문항 전체형"),
     saved ? h("div", { style: { fontSize: 12, color: "#3E7C5A", marginBottom: 20 } }, "✓ 결과가 저장되었습니다")
       : saveError ? h("div", { style: { marginBottom: 20, padding: 12, background: "#F5EAE6", borderRadius: 10 } },
           h("div", { style: { fontSize: 13, color: "#B0492E", marginBottom: 8 } }, "결과가 아직 저장되지 않았습니다."),
@@ -764,7 +785,9 @@ function AdminScreen(props) {
   const [pwErr, setPwErr] = useState("");
   const [codes, setCodes] = useState([]);
   const [newCode, setNewCode] = useState("");
+  const [newMode, setNewMode] = useState("72");
   const [sel, setSel] = useState("");
+  const [selMode, setSelMode] = useState("96");
   const [rows, setRows] = useState(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
@@ -783,7 +806,15 @@ function AdminScreen(props) {
   async function loadCodes() {
     try {
       const r = await api("codesList", { pw: pw });
-      if (r.ok) setCodes(r.codes || []);
+      if (r.ok) {
+        var list = r.codeItems;
+        if (!Array.isArray(list)) {
+          list = (r.codes || []).map(function (c) { return { code: c, mode: "96" }; });
+        }
+        setCodes(list.map(function (x) {
+          return { code: String(x.code || ""), mode: String(x.mode) === "72" ? "72" : "96" };
+        }).filter(function (x) { return x.code; }));
+      }
     } catch (e) { setErr("코드 목록을 불러오지 못했습니다."); }
   }
 
@@ -791,7 +822,7 @@ function AdminScreen(props) {
     const c = newCode.trim(); if (!c) return;
     setErr("");
     try {
-      const r = await api("codesAdd", { pw: pw, code: c });
+      const r = await api("codesAdd", { pw: pw, code: c, mode: newMode });
       if (r.ok) { setNewCode(""); loadCodes(); }
       else if (r.error === "exists") setErr("이미 등록된 코드입니다.");
       else setErr("코드 추가에 실패했습니다.");
@@ -802,13 +833,13 @@ function AdminScreen(props) {
     if (!window.confirm("진단코드 '" + c + "' 을(를) 삭제할까요? (응답 결과는 별도로 남습니다)")) return;
     try {
       await api("codesRemove", { pw: pw, code: c });
-      if (sel === c) { setSel(""); setRows(null); }
+      if (sel === c) { setSel(""); setSelMode("96"); setRows(null); }
       loadCodes();
     } catch (e) { setErr("코드 삭제에 실패했습니다."); }
   }
 
-  async function openCode(c) {
-    setSel(c); setRows(null); setLoading(true); setErr(""); setOpenId(null);
+  async function openCode(c, mode) {
+    setSel(c); setSelMode(mode === "72" ? "72" : "96"); setRows(null); setLoading(true); setErr(""); setOpenId(null);
     try {
       const r = await api("list", { pw: pw, code: c });
       if (r.ok) setRows(r.rows || []);
@@ -853,12 +884,12 @@ function AdminScreen(props) {
 
   function exportCSV() {
     if (!rows || !rows.length) return;
-    const header = ["닉네임", "제출시각"].concat(STRENGTHS.map(function (s) { return s.name; }));
+    const header = ["닉네임", "제출시각", "문항형"].concat(STRENGTHS.map(function (s) { return s.name; }));
     const lines = [header.join(",")];
     rows.forEach(function (r) {
       const d = new Date(r.ts);
       const ds = d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate()) + " " + pad2(d.getHours()) + ":" + pad2(d.getMinutes());
-      const row = [csvCell(r.nick), ds];
+      const row = [csvCell(r.nick), ds, (r.mode === "72" ? "72문항 간편형" : "96문항 전체형")];
       STRENGTHS.forEach(function (s) {
         const v = r.scores && r.scores[s.code] != null ? r.scores[s.code].toFixed(2) : "";
         row.push(v);
@@ -910,6 +941,21 @@ function AdminScreen(props) {
     /* 진단코드 관리 */
     h("div", { style: { background: "#fff", borderRadius: 12, padding: 16, marginBottom: 18, border: "1px solid #E8EAE7" } },
       h("div", { style: { fontSize: 14, fontWeight: 700, marginBottom: 12 } }, "진단코드"),
+      h("div", { style: { display: "flex", gap: 8, marginBottom: 10 } },
+        [{ mode: "72", title: "간편형 · 72문항", time: "약 7~9분" },
+         { mode: "96", title: "전체형 · 96문항", time: "약 10~12분" }].map(function (opt) {
+          const on = newMode === opt.mode;
+          return h("button", {
+            key: opt.mode, onClick: function () { setNewMode(opt.mode); },
+            style: { flex: 1, padding: "10px 8px", borderRadius: 9,
+              border: on ? "1px solid #3E6B52" : "1px solid #DDE1DC",
+              background: on ? "#E8F0EB" : "#FAFBFA", color: on ? "#2F5D43" : "#6A716A",
+              fontSize: 12.5, fontWeight: on ? 700 : 500, lineHeight: 1.45 }
+          }, opt.title, h("span", { style: { display: "block", fontSize: 11, fontWeight: 400, marginTop: 2 } }, opt.time));
+        })
+      ),
+      h("div", { style: { fontSize: 11.5, color: "#8A918A", lineHeight: 1.5, marginBottom: 10 } },
+        "72문항형은 현장 응답 피로를 줄인 간편형입니다. 96문항형보다 강점별 정보가 적으므로, 서로 다른 문항형의 결과를 하나의 그룹 통계로 합치지 마세요."),
       h("div", { style: { display: "flex", gap: 8, marginBottom: 12 } },
         h("input", {
           value: newCode, placeholder: "예: HD0715 (문자+숫자 권장)",
@@ -921,14 +967,16 @@ function AdminScreen(props) {
       ),
       codes.length === 0 ? h("div", { style: { fontSize: 13, color: "#9AA09A" } }, "등록된 코드가 없습니다.")
         : h("div", { style: { display: "flex", flexWrap: "wrap", gap: 8 } },
-          codes.map(function (c) {
+          codes.map(function (item) {
+            const c = item.code;
             const on = sel === c;
             return h("div", { key: c, style: {
               display: "flex", alignItems: "center", gap: 6, padding: "6px 8px 6px 12px",
               borderRadius: 8, fontSize: 13.5, fontWeight: 600,
               background: on ? "#3E6B52" : "#EEF1ED", color: on ? "#fff" : "#4A514A"
             } },
-              h("button", { onClick: function () { openCode(c); }, style: { background: "none", color: "inherit", fontWeight: 600, fontSize: 13.5 } }, c),
+              h("button", { onClick: function () { openCode(c, item.mode); }, style: { background: "none", color: "inherit", fontWeight: 600, fontSize: 13.5 } },
+                c, h("span", { style: { marginLeft: 5, fontSize: 10.5, opacity: 0.75, fontWeight: 500 } }, item.mode + "문항")),
               h("button", { onClick: function () { removeCode(c); }, style: { background: "none", color: on ? "#CFE3D6" : "#B4B9B4", fontSize: 15, lineHeight: 1 } }, "×")
             );
           })
@@ -941,7 +989,10 @@ function AdminScreen(props) {
     /* 결과 */
     (sel && rows) ? h("div", null,
       h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", margin: "6px 0 14px" } },
-        h("div", { style: { fontSize: 15, fontWeight: 700 } }, "'" + sel + "' 응답 " + rows.length + "명"),
+        h("div", { style: { fontSize: 15, fontWeight: 700 } },
+          "'" + sel + "' 응답 " + rows.length + "명",
+          h("span", { style: { marginLeft: 7, fontSize: 11, color: "#8A918A", fontWeight: 500 } },
+            selMode === "72" ? "간편형 · 72문항" : "전체형 · 96문항")),
         rows.length ? h("div", { style: { display: "flex", gap: 8 } },
           h("button", { onClick: exportCSV, style: { fontSize: 12.5, padding: "7px 12px", borderRadius: 8, background: "#EAEDE9", color: "#5A615A", fontWeight: 600 } }, "CSV"),
           h("button", { onClick: delAll, style: { fontSize: 12.5, padding: "7px 12px", borderRadius: 8, background: "#F3E4E0", color: "#C0492E", fontWeight: 600 } }, "전체삭제")
@@ -1193,13 +1244,19 @@ function App() {
   const [screen, setScreen] = useState("start"); // start, quiz, check, result, admin (조합해석은 result 내부 뷰)
   const [code, setCode] = useState("");
   const [nick, setNick] = useState("");
-  const [items] = useState(function () { return shuffleSpread(QITEMS); });
+  const [mode, setMode] = useState("96");
+  const [items, setItems] = useState([]);
   const [answers, setAnswers] = useState(null);
   const [scores, setScores] = useState(null);
   const [top5, setTop5] = useState(null);
   const [checks, setChecks] = useState(null);
 
-  function onStart(c, n) { setCode(c); setNick(n); setScreen("quiz"); }
+  function onStart(c, n, selectedMode) {
+    var m = selectedMode === "72" ? "72" : "96";
+    setCode(c); setNick(n); setMode(m);
+    setItems(shuffleSpread(questionItemsForMode(m)));
+    setScreen("quiz");
+  }
 
   function onQuizDone(ans) {
     const sc = computeScores(ans);
@@ -1225,7 +1282,7 @@ function App() {
   if (screen === "check")
     return h(CheckScreen, { top5: top5, onDone: onCheckDone });
   if (screen === "result")
-    return h(ResultScreen, { code: code, nick: nick, scores: scores, top5: top5, checks: checks, saved: false });
+    return h(ResultScreen, { code: code, nick: nick, mode: mode, scores: scores, top5: top5, checks: checks, saved: false });
   return h(StartScreen, { onStart: onStart, onAdmin: function () { setScreen("admin"); } });
 }
 
