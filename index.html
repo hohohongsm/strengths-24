@@ -875,7 +875,7 @@ function buildResultHTML(data, whiteLogoSrc) {
     + '@page { size: A4; margin: 10mm 10mm 12mm; }'
     + '* { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }'
     + 'html,body { margin:0; padding:0; font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Malgun Gothic",sans-serif; color:#2A2E2A; }'
-    + '.cover { position:relative; background:#111A2E; color:#EEF1F7; width:190mm; height:274mm; min-height:0; max-height:274mm; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; overflow:hidden; break-after:page; page-break-after:always; }'
+    + '.cover { position:relative; background:#111A2E; color:#EEF1F7; width:190mm; height:260mm; min-height:0; max-height:260mm; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; overflow:hidden; break-inside:avoid; page-break-inside:avoid; break-after:page; page-break-after:always; }'
     + '.cover .eb { font-size:11px; letter-spacing:4px; color:#B9903E; font-weight:600; }'
     + '.cover h1 { font-size:40px; font-weight:700; margin:18px 0 0; letter-spacing:-0.5px; }'
     + '.cover .rule { width:34px; height:1px; background:#C9A24B; opacity:0.6; margin:22px 0; }'
@@ -1113,7 +1113,7 @@ function ResultScreen(props) {
       return false;
     }
     // 저장 실패·이름 충돌 등 미저장
-    return window.confirm("이 결과는 아직 서버에 저장되지 않았습니다. 결과 공유하기나 PDF로 먼저 보관한 뒤 이동하는 것이 좋습니다. 그래도 처음 화면으로 이동할까요?");
+    return window.confirm("이 결과는 아직 서버에 저장되지 않았습니다. 결과 텍스트 공유나 PDF로 먼저 보관한 뒤 이동하는 것이 좋습니다. 그래도 처음 화면으로 이동할까요?");
   }
 
   // 폰 뒤로가기 처리. history 항목은 '결과 baseline 1개'만 유지한다.
@@ -1283,7 +1283,7 @@ function ResultScreen(props) {
       h(Btn, { onClick: function () {
         shareResultText({ nick: resultNick, scores: scores, top5: top5, checks: checks, mode: props.mode, completedAt: completedAt, resultStatus: resultStatus });
       }, color: "#3E6B52" },
-        "결과 공유하기 (카톡·메일)")),
+        "결과 텍스트 공유하기 (카톡·메일)")),
 
     /* 결과 PDF로 저장 */
     h("div", { style: { marginTop: 12 } },
@@ -1707,7 +1707,7 @@ function AdminScreen(props) {
               h(Btn, { onClick: function () {
                 shareResultText({ nick: r.nick, scores: r.scores, top5: r.top5, checks: r.checks, mode: r.mode, completedAt: r.completedAt, resultStatus: r.resultStatus });
               }, color: "#3E6B52", style: { fontSize: 13, padding: "11px 14px" } },
-                "이 참가자 결과 공유하기 (카톡·메일)")),
+                "이 참가자 결과를 텍스트로 공유하기 (카톡·메일)")),
             h("div", { style: { marginBottom: 12 } },
               h(Btn, { onClick: function () {
                 downloadResultPDF({ nick: r.nick, scores: r.scores, top5: r.top5, checks: r.checks, mode: r.mode, completedAt: r.completedAt, resultStatus: r.resultStatus });
@@ -1900,7 +1900,7 @@ function ComboScreen(props) {
 
     props.shareData ? h("div", { style: { marginTop: 22 } },
       h(Btn, { onClick: function () { shareResultText(props.shareData); }, color: "#3E6B52" },
-        "결과 공유하기 (카톡·메일)")) : null,
+        "결과 텍스트 공유하기 (카톡·메일)")) : null,
     props.shareData ? h("div", { style: { marginTop: 12 } },
       h(Btn, { onClick: function () { downloadResultPDF(props.shareData); }, color: "#4A7C8C" },
         "결과 PDF로 저장·인쇄")) : null,
