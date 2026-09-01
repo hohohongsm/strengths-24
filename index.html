@@ -117,6 +117,47 @@ function top5Codes(scores) {
   return out;
 }
 
+/* 결과를 억지로 5개로 자르지 않기 위한 프로필 상태 분석.
+   96문항형은 0.25, 72문항형은 약 0.33 단위로 점수가 움직이므로
+   전체 폭 0.5 미만은 강점 간 차이가 거의 없는 경우로 봅니다. */
+const FLAT_PROFILE_GAP = 0.5;
+function analyzeProfile(scores) {
+  var ranked = rankStrengths(scores || {});
+  if (!ranked.length) return { status: "flat", range: 0, topCodes: [], clearCodes: [], tiedCodes: [] };
+  var range = ranked[0].score - ranked[ranked.length - 1].score;
+  var rawTop = top5Codes(scores || {});
+  var cutScore = ranked.length >= 5 ? ranked[4].score : ranked[ranked.length - 1].score;
+  var clearCodes = ranked.filter(function (x) { return x.score > cutScore; }).map(function (x) { return x.code; });
+  var tiedCodes = ranked.filter(function (x) { return x.score === cutScore; }).map(function (x) { return x.code; });
+  if (range < FLAT_PROFILE_GAP) {
+    return { status: "flat", range: range, topCodes: [], clearCodes: [], tiedCodes: ranked.map(function (x) { return x.code; }) };
+  }
+  if (rawTop.length > 6) {
+    return { status: "ambiguous_cutoff", range: range, topCodes: clearCodes.slice(), clearCodes: clearCodes, tiedCodes: tiedCodes };
+  }
+  return { status: "normal", range: range, topCodes: rawTop, clearCodes: rawTop, tiedCodes: [] };
+}
+
+function resultStatusType(value) {
+  return value === "flat" || value === "ambiguous_cutoff" ? value : "normal";
+}
+function resultStatusLabel(value) {
+  var status = resultStatusType(value);
+  return status === "flat" ? "강점 간 차이 거의 없음" : status === "ambiguous_cutoff" ? "상위 경계 동점 다수" : "일반 결과";
+}
+function competitionRankMap(scores) {
+  var ranked = rankStrengths(scores || {}), map = {}, rank = 0, prev = null;
+  ranked.forEach(function (item, idx) {
+    if (idx === 0 || item.score !== prev) rank = idx + 1;
+    map[item.code] = rank; prev = item.score;
+  });
+  return map;
+}
+function rankLabel(code, scores) {
+  var map = competitionRankMap(scores || {});
+  return map[code] ? String(map[code]) : "";
+}
+
 /* 5위와 6위가 근소차인지 (화면 안내용, 수치는 노출 안 함) */
 const CLOSE_GAP = 0.25;
 function hasHiddenTieFor(scores, top5) {
@@ -180,7 +221,10 @@ function participationLabel(kind) {
 }
 function groupBaseRows(rows) {
   // 이름은 본인 확인 수단이 아닙니다. 같은 이름끼리 합치거나 최신 결과로 덮지 않습니다.
-  return (rows || []).filter(function (r) { return r.participation !== "retake"; });
+  // 재진단과 대표 강점을 구분하기 어려운 결과는 개인 기록에는 남기되 그룹 통계에서는 제외합니다.
+  return (rows || []).filter(function (r) {
+    return r.participation !== "retake" && resultStatusType(r.resultStatus) === "normal";
+  });
 }
 </script>
 <script>
@@ -251,10 +295,41 @@ const BRAND_NAME = "가치그린 코칭교육연구소";
 const RESULT_DISCLAIMER = "이 결과는 지금의 자기인식과 경험을 바탕으로 한 개인 내 강점 프로필입니다. 자기이해와 성장을 위한 자료로 활용하며, 채용·선발·평가나 임상적 판단을 위한 것이 아닙니다. 완료 시각은 기기 시각을 바탕으로 표시됩니다. 재진단 결과는 같은 문항형끼리 참고하고, 순위 변화만으로 성장이나 저하를 단정하지 마세요.";
 const NOTE_CLOSE = "상위 강점들의 점수 차이가 크지 않습니다. 순위 자체보다, 이 강점들이 실제 경험에서 어떻게 나타나는지 살펴보는 것이 더 중요합니다.";
 const NOTE_HIDDEN_TIE = "같은 점수의 강점이 여러 개 있어, 일부 강점은 함께 확인해 보시면 좋습니다.";
+const NOTE_FLAT = "이번 응답에서는 강점 간 차이가 거의 나타나지 않아 대표 강점의 순위를 구분하기 어렵습니다. 임의의 순위를 제시하지 않고 강점들을 함께 살펴볼 수 있도록 안내합니다. 원하시면 최근 6개월의 구체적인 상황을 떠올리며 다시 응답해 보세요.";
+const NOTE_AMBIGUOUS = "상위 강점의 경계에 같은 점수의 강점이 많아 대표 강점 5개를 정확히 구분하기 어렵습니다. 코드 순서로 일부를 잘라 순위를 만들지 않고, 상대적으로 높게 나타난 강점과 같은 점수로 함께 나타난 강점을 나누어 안내합니다.";
 const BRAND_LOGO_SRC = "data:image/png;base64,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";
 // 결과 이미지 저장 때 추가 대기 없이 사용할 수 있도록 미리 읽습니다.
 const BRAND_LOGO_IMAGE = new Image();
 BRAND_LOGO_IMAGE.src = BRAND_LOGO_SRC;
+let BRAND_LOGO_WHITE_SRC = "";
+let BRAND_LOGO_WHITE_PROMISE = null;
+function ensureWhiteBrandLogo() {
+  if (BRAND_LOGO_WHITE_SRC) return Promise.resolve(BRAND_LOGO_WHITE_SRC);
+  if (BRAND_LOGO_WHITE_PROMISE) return BRAND_LOGO_WHITE_PROMISE;
+  BRAND_LOGO_WHITE_PROMISE = new Promise(function (resolve) {
+    function convert() {
+      try {
+        var cv = document.createElement("canvas");
+        cv.width = BRAND_LOGO_IMAGE.naturalWidth || 900;
+        cv.height = BRAND_LOGO_IMAGE.naturalHeight || 216;
+        var ctx = cv.getContext("2d");
+        ctx.drawImage(BRAND_LOGO_IMAGE, 0, 0, cv.width, cv.height);
+        ctx.globalCompositeOperation = "source-in";
+        ctx.fillStyle = "#FFFFFF";
+        ctx.fillRect(0, 0, cv.width, cv.height);
+        BRAND_LOGO_WHITE_SRC = cv.toDataURL("image/png");
+      } catch (e) { BRAND_LOGO_WHITE_SRC = ""; }
+      resolve(BRAND_LOGO_WHITE_SRC);
+    }
+    if (BRAND_LOGO_IMAGE.complete && BRAND_LOGO_IMAGE.naturalWidth) convert();
+    else {
+      BRAND_LOGO_IMAGE.addEventListener("load", convert, { once: true });
+      BRAND_LOGO_IMAGE.addEventListener("error", function () { resolve(""); }, { once: true });
+    }
+  });
+  return BRAND_LOGO_WHITE_PROMISE;
+}
+ensureWhiteBrandLogo();
 
 function BrandMark(props) {
   const compact = props && props.compact;
@@ -312,12 +387,12 @@ function StartScreen(props) {
     var lastErr = false;
     for (var i = 0; i < attempts; i++) {
       try {
-        const r = await api("validate", { code: sanitize(code), nick: nick.trim(), entryVersion: 3 });
+        const r = await api("validate", { code: sanitize(code), nick: nick.trim(), entryVersion: 4 });
         // 서버 오류({ok:false})나 응답 없음 → catch로 보내 재시도
         if (!r || r.ok !== true) throw new Error("server error");
         // 정상 통신: valid로 판단
         if (r.valid) {
-          if (!(Number(r.entryVersion) >= 3) || typeof r.nicknameExists !== "boolean") {
+          if (!(Number(r.entryVersion) >= 4) || typeof r.nicknameExists !== "boolean") {
             setErr("앱 업데이트가 아직 완료되지 않았습니다. 진행자에게 백엔드 배포 확인을 요청해 주세요.");
             return;
           }
@@ -616,7 +691,9 @@ const SECTION_ORDER = [
 function buildShareText(data) {
   var nick = data.nick || "";
   var scores = data.scores || {};
-  var top5 = data.top5 || [];
+  var profile = analyzeProfile(scores);
+  var status = resultStatusType(data.resultStatus || profile.status);
+  var top5 = status === "normal" ? (data.top5 || profile.topCodes) : (status === "ambiguous_cutoff" ? profile.clearCodes : []);
   var checks = data.checks || {};
   var mode = data.mode === "72" ? "72문항" : "96문항";
   var LINE = "━━━━━━━━━━━━━━━━";
@@ -624,7 +701,7 @@ function buildShareText(data) {
   var out = [];
 
   out.push(LINE);
-  out.push("  강점발견 · 나의 대표 강점");
+  out.push("  강점발견 · " + (status === "normal" ? "나의 대표 강점" : "결과 안내"));
   if (nick) out.push("  " + nick + " 님");
   var when = data.completedAt ? formatKoreaTime(data.completedAt) : "";
   out.push("  " + (when ? when + " · " : "") + mode);
@@ -632,10 +709,26 @@ function buildShareText(data) {
   out.push("");
 
   var SEC = SECTION_ORDER;
-  top5.forEach(function (code, idx) {
+  if (status === "flat") {
+    out.push(NOTE_FLAT); out.push("");
+    out.push("함께 살펴볼 24개 강점 (순위 없음)"); out.push("");
+    STRENGTHS.forEach(function (s) { out.push("· " + s.name + " 〔" + s.virtue + "〕" + (s.short ? " — " + s.short : "")); });
+    out.push(""); out.push(THIN); out.push("");
+  } else if (status === "ambiguous_cutoff") {
+    out.push(NOTE_AMBIGUOUS); out.push("");
+    if (profile.clearCodes.length) {
+      out.push("상대적으로 높게 나타난 강점");
+      profile.clearCodes.forEach(function (code) { var s = strengthByCode(code); if (s) out.push("· " + s.name + " 〔" + s.virtue + "〕"); });
+      out.push("");
+    }
+    out.push("상위 경계에서 같은 점수로 나타난 강점 (순위 없음)");
+    profile.tiedCodes.forEach(function (code) { var s = strengthByCode(code); if (s) out.push("· " + s.name + " 〔" + s.virtue + "〕" + (s.short ? " — " + s.short : "")); });
+    out.push(""); out.push(THIN); out.push("");
+  }
+  top5.forEach(function (code) {
     var s = strengthByCode(code);
     if (!s) return;
-    out.push((idx + 1) + ". " + s.name + "  〔" + s.virtue + "〕");
+    out.push((status === "normal" ? rankLabel(code, scores) + "위. " : "") + s.name + "  〔" + s.virtue + "〕");
     if (s.short) out.push("   " + s.short);
     var lab = checkLabel(checks && checks[code]);
     if (lab) out.push("   ✓ " + lab.text);
@@ -652,7 +745,7 @@ function buildShareText(data) {
   });
 
   /* 조합 해석 */
-  var sel = selectCombos(top5);
+  var sel = status === "normal" ? selectCombos(top5) : null;
   if (sel && (sel.synergy.length || sel.balance.length)) {
     out.push("나의 상위 강점이 연결되는 방식");
     out.push("");
@@ -678,8 +771,8 @@ function buildShareText(data) {
     out.push("");
   }
 
-  if (isCloseAtCut(scores)) { out.push(NOTE_CLOSE); out.push(""); }
-  if (hasHiddenTieFor(scores, top5)) { out.push(NOTE_HIDDEN_TIE); out.push(""); }
+  if (status === "normal" && isCloseAtCut(scores)) { out.push(NOTE_CLOSE); out.push(""); }
+  if (status === "normal" && hasHiddenTieFor(scores, top5)) { out.push(NOTE_HIDDEN_TIE); out.push(""); }
   RESULT_DISCLAIMER.split(". ").forEach(function (line, i, arr) {
     out.push(i < arr.length - 1 ? line + "." : line);
   });
@@ -713,17 +806,19 @@ function esc(s) {
     .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
 }
-function buildResultHTML(data) {
+function buildResultHTML(data, whiteLogoSrc) {
   var nick = esc(data.nick || "");
   var scores = data.scores || {};
-  var top5 = data.top5 || [];
+  var profile = analyzeProfile(scores);
+  var status = resultStatusType(data.resultStatus || profile.status);
+  var top5 = status === "normal" ? (data.top5 || profile.topCodes) : (status === "ambiguous_cutoff" ? profile.clearCodes : []);
   var checks = data.checks || {};
   var modeLabel = data.mode === "72" ? "72문항 간편형" : "96문항 전체형";
   var when = data.completedAt ? esc(formatKoreaTime(data.completedAt)) : "";
   var SEC = SECTION_ORDER;
 
   var cards = "";
-  top5.forEach(function (code, idx) {
+  top5.forEach(function (code) {
     var s = strengthByCode(code);
     if (!s) return;
     var color = VIRTUE_COLOR[s.virtue] || "#3E6B52";
@@ -741,7 +836,7 @@ function buildResultHTML(data) {
     cards += '<div class="card">'
       + '<div class="bar" style="background:' + color + '"></div>'
       + '<div class="card-in">'
-      + '<div class="card-h"><span class="num" style="color:' + color + '">' + (idx + 1) + '</span>'
+      + '<div class="card-h"><span class="num" style="color:' + color + '">' + (status === "normal" ? rankLabel(code, scores) + "위" : "•") + '</span>'
       + '<span class="virtue">' + esc(s.virtue) + '</span>'
       + '<span class="name">' + esc(s.name) + '</span></div>'
       + (s.short ? '<div class="short">' + esc(s.short) + '</div>' : "")
@@ -752,7 +847,7 @@ function buildResultHTML(data) {
 
   /* 조합 */
   var comboHtml = "";
-  var sel = selectCombos(top5);
+  var sel = status === "normal" ? selectCombos(top5) : null;
   if (sel && (sel.synergy.length || sel.balance.length)) {
     var synBlocks = sel.synergy.map(function (p) {
       var s0 = strengthByCode(p.key.split("-")[0]);
@@ -777,10 +872,10 @@ function buildResultHTML(data) {
   }
 
   var css = ''
-    + '@page { size: A4; margin: 14mm 14mm 16mm; }'
+    + '@page { size: A4; margin: 10mm 10mm 12mm; }'
     + '* { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }'
     + 'html,body { margin:0; padding:0; font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Malgun Gothic",sans-serif; color:#2A2E2A; }'
-    + '.cover { position:relative; background:#111A2E; color:#EEF1F7; height:calc(100vh - 30mm); min-height:240mm; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; border-radius:0; page-break-after:always; overflow:hidden; }'
+    + '.cover { position:relative; background:#111A2E; color:#EEF1F7; width:190mm; height:274mm; min-height:0; max-height:274mm; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; overflow:hidden; break-after:page; page-break-after:always; }'
     + '.cover .eb { font-size:11px; letter-spacing:4px; color:#B9903E; font-weight:600; }'
     + '.cover h1 { font-size:40px; font-weight:700; margin:18px 0 0; letter-spacing:-0.5px; }'
     + '.cover .rule { width:34px; height:1px; background:#C9A24B; opacity:0.6; margin:22px 0; }'
@@ -788,8 +883,7 @@ function buildResultHTML(data) {
     + '.cover .meta { font-size:13px; color:#AEB6C4; margin-top:8px; line-height:1.7; }'
     + '.cover .stars { position:absolute; inset:0; }'
     + '.cover .cbrand { position:absolute; bottom:14mm; left:0; right:0; text-align:center; }'
-    + '.cover .cbrand img { width:132px; height:auto; opacity:0.92; display:block; margin:0 auto 7px; }'
-    + '.cover .cbrand .cbname { font-size:11px; color:#8E96A6; letter-spacing:0.5px; }'
+    + '.cover .cbrand img { width:132px; height:auto; opacity:0.96; display:block; margin:0 auto; }'
     + '.body { padding:0; }'
     + '.eyebrow { font-size:10px; letter-spacing:2px; color:#8A918A; font-weight:600; margin:0 0 14px; }'
     + '.card { display:flex; background:#fff; border:0.5px solid #E8EAE7; border-radius:12px; overflow:hidden; margin-bottom:14px; page-break-inside:avoid; }'
@@ -819,6 +913,24 @@ function buildResultHTML(data) {
     + '.foot { margin-top:20px; padding-top:14px; border-top:0.5px solid #E0E3DF; font-size:11.5px; line-height:1.6; color:#9AA09A; }'
     + '.brand-line { margin-top:12px; text-align:center; font-size:11px; color:#9AA09A; }';
 
+  var specialHtml = "";
+  if (status !== "normal") {
+    var noteText = status === "flat" ? NOTE_FLAT : NOTE_AMBIGUOUS;
+    var listCodes = status === "flat" ? STRENGTHS.map(function (s) { return s.code; }) : profile.tiedCodes;
+    var listTitle = status === "flat" ? "함께 살펴볼 24개 강점 · 순위 없음" : "상위 경계에서 같은 점수로 나타난 강점 · 순위 없음";
+    var clearHtml = "";
+    if (status === "ambiguous_cutoff" && profile.clearCodes.length) {
+      clearHtml = '<h3>상대적으로 높게 나타난 강점</h3><div class="special-list">' + profile.clearCodes.map(function (code) {
+        var s = strengthByCode(code); return s ? '<div><b>' + esc(s.name) + '</b><span>' + esc(s.virtue) + '</span></div>' : '';
+      }).join("") + '</div>';
+    }
+    specialHtml = '<div class="special"><div class="note strong">' + esc(noteText) + '</div>' + clearHtml
+      + '<h3>' + esc(listTitle) + '</h3><div class="special-list">' + listCodes.map(function (code) {
+        var s = strengthByCode(code); return s ? '<div><b>' + esc(s.name) + '</b><span>' + esc(s.virtue) + (s.short ? ' · ' + esc(s.short) : '') + '</span></div>' : '';
+      }).join("") + '</div><div class="foot">' + esc(RESULT_DISCLAIMER) + '</div><div class="brand-line">' + esc(BRAND_NAME) + '</div></div>';
+    css += '.special h3{font-size:16px;margin:22px 0 10px}.special .strong{font-size:13px;line-height:1.7;background:#FBF2E5;color:#5A5146}.special-list{display:grid;grid-template-columns:1fr 1fr;gap:8px 12px}.special-list>div{border:0.5px solid #E3E6E1;border-radius:8px;padding:9px 10px;break-inside:avoid}.special-list b{font-size:13px;margin-right:7px}.special-list span{font-size:10.5px;color:#858C85}';
+  }
+
   var starsSvg = '<svg class="stars" viewBox="0 0 300 424" preserveAspectRatio="xMidYMid slice" aria-hidden="true">'
     + '<line x1="70" y1="60" x2="120" y2="120" stroke="#C9A24B" stroke-width="0.6" opacity="0.45"/>'
     + '<line x1="120" y1="120" x2="200" y2="95" stroke="#C9A24B" stroke-width="0.6" opacity="0.45"/>'
@@ -839,9 +951,10 @@ function buildResultHTML(data) {
     + '<div class="rule"></div>'
     + '<div class="who">' + (nick ? nick + ' 님' : '') + '</div>'
     + '<div class="meta">' + (when ? when + '<br>' : '') + esc(modeLabel) + '</div>'
-    + '<div class="cbrand">' + '<img src="' + BRAND_LOGO_SRC + '" alt="' + esc(BRAND_NAME) + '" style="filter:brightness(0) invert(1);">' + '<div class="cbname">' + esc(BRAND_NAME) + '</div>' + '</div></div>';
+    + '<div class="cbrand">' + (whiteLogoSrc ? '<img src="' + whiteLogoSrc + '" alt="' + esc(BRAND_NAME) + '">' : '') + '</div></div>';
 
-  var bodyInner = '<div class="body"><div class="eyebrow">나의 대표 강점</div>' + cards + comboHtml + '</div>';
+  var bodyInner = '<div class="body"><div class="eyebrow">' + (status === "normal" ? '나의 대표 강점' : '결과 안내') + '</div>'
+    + (status === "normal" ? cards + comboHtml : specialHtml) + '</div>';
 
   return '<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8">'
     + '<meta name="viewport" content="width=device-width, initial-scale=1">'
@@ -850,21 +963,22 @@ function buildResultHTML(data) {
 }
 
 function downloadResultPDF(data) {
-  var html = buildResultHTML(data);
   var w = window.open("", "_blank");
   if (!w) {
     alert("PDF 창을 열 수 없습니다. 팝업 차단을 해제한 뒤 다시 시도해 주세요.");
     return;
   }
-  w.document.open();
-  w.document.write(html);
+  w.document.write('<!doctype html><meta charset="utf-8"><title>PDF 준비 중</title><p style="font-family:sans-serif;padding:24px">PDF를 준비하고 있습니다…</p>');
   w.document.close();
-  // 렌더가 끝난 뒤 인쇄 대화상자(→ PDF로 저장)를 연다.
-  var done = false;
-  function go() { if (done) return; done = true; try { w.focus(); w.print(); } catch (e) {} }
-  if (w.document.readyState === "complete") setTimeout(go, 400);
-  else w.onload = function () { setTimeout(go, 400); };
-  setTimeout(go, 1200);
+  ensureWhiteBrandLogo().then(function (logoSrc) {
+    var html = buildResultHTML(data, logoSrc);
+    w.document.open(); w.document.write(html); w.document.close();
+    var done = false;
+    function go() { if (done) return; done = true; try { w.focus(); w.print(); } catch (e) {} }
+    if (w.document.readyState === "complete") setTimeout(go, 600);
+    else w.onload = function () { setTimeout(go, 600); };
+    setTimeout(go, 1800);
+  });
 }
 function copyText(text) {
   if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -890,6 +1004,8 @@ function ResultScreen(props) {
   const scores = props.scores;
   const top5 = props.top5;
   const checks = props.checks;
+  const profile = useMemo(function () { return analyzeProfile(scores); }, [scores]);
+  const resultStatus = resultStatusType(props.resultStatus || profile.status);
   const ranked = useMemo(function () { return rankStrengths(scores); }, [scores]);
   const close = useMemo(function () { return isCloseAtCut(scores); }, [scores]);
   // 상위 강점과 동점인 강점이 더 있는지 (6개 상한으로 잘렸을 수 있음)
@@ -904,7 +1020,7 @@ function ResultScreen(props) {
   }, [top5, scores, ranked]);
   const [view, setView] = useState("result");
   const [openCode, setOpenCode] = useState(top5[0]);
-  const [showAll, setShowAll] = useState(false);
+  const [showAll, setShowAll] = useState(resultStatus !== "normal");
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState(false);
@@ -926,7 +1042,7 @@ function ResultScreen(props) {
     const r = await api("save", {
       code: props.code, nick: entry.nick, responseId: ridRef.current,
       scores: scores, top5: top5, checks: checks, mode: props.mode,
-      completedAt: completedAt, participation: entry.participation, entryVersion: 3
+      completedAt: completedAt, participation: entry.participation, resultStatus: resultStatus, entryVersion: 4
     });
     return r;
   }
@@ -953,7 +1069,7 @@ function ResultScreen(props) {
           conflict = true; setNameConflict(true); setNameDraft(entry.nick);
           break; // 동시 시작한 동명이인: 응답을 유지한 채 선택을 요청합니다.
         }
-        if (r && ["response_conflict", "invalid_completed_at", "invalid_participation"].indexOf(r.error) >= 0) {
+        if (r && ["response_conflict", "invalid_completed_at", "invalid_participation", "invalid_result_status", "invalid_result_profile"].indexOf(r.error) >= 0) {
           setSaveMessage("저장 정보를 확인하지 못했습니다. 결과 이미지를 보관한 뒤 진행자에게 문의해 주세요."); break;
         }
       } catch (e) { ok = false; }
@@ -1037,12 +1153,12 @@ function ResultScreen(props) {
   // responseId·저장상태가 유지되고 재저장이 일어나지 않는다.
   if (view === "combo")
     return h(ComboScreen, { top5: top5, completedAt: completedAt, mode: props.mode, onBack: function () { window.history.back(); },
-      shareData: { nick: resultNick, scores: scores, top5: top5, checks: checks, mode: props.mode, completedAt: completedAt },
-      onSavePNG: function () { downloadResultPNG(resultNick, top5, checks, completedAt, props.mode, participation); } });
+      shareData: { nick: resultNick, scores: scores, top5: top5, checks: checks, mode: props.mode, completedAt: completedAt, resultStatus: resultStatus },
+      onSavePNG: function () { downloadResultPNG(resultNick, scores, top5, checks, completedAt, props.mode, participation, resultStatus); } });
 
   return h("div", { className: "wrap", style: { padding: "30px 18px 60px" } },
     h("div", { style: { fontSize: 12, letterSpacing: 3, color: "#8A918A", fontWeight: 600 } }, "나의 강점발견"),
-    h("h1", { style: { fontSize: 23, fontWeight: 700, margin: "8px 0 4px" } }, resultNick + " 님의 대표 강점"),
+    h("h1", { style: { fontSize: 23, fontWeight: 700, margin: "8px 0 4px" } }, resultNick + " 님의 " + (resultStatus === "normal" ? "대표 강점" : "결과 안내")),
     h("p", { style: { fontSize: 13.5, color: "#7A817A", marginBottom: 4 } },
       "나답게 발휘되는 강점과 활용 방향입니다."),
     h("div", { style: { fontSize: 11.5, color: "#9AA09A", marginBottom: 4 } },
@@ -1065,6 +1181,18 @@ function ResultScreen(props) {
             saving ? "저장 중…" : "다시 저장하기"))
       : h("div", { style: { fontSize: 12, color: "#9AA09A", marginBottom: 20 } }, saving ? "저장 중…" : ""),
 
+    resultStatus !== "normal" ? h("div", { role: "status", style: {
+      marginBottom: 18, padding: 16, borderRadius: 12, background: "#FBF2E5",
+      border: "1px solid #E6D3B1", color: "#5A5146", fontSize: 13.5, lineHeight: 1.7
+    } }, resultStatus === "flat" ? NOTE_FLAT : NOTE_AMBIGUOUS) : null,
+
+    resultStatus === "ambiguous_cutoff" && profile.tiedCodes.length ? h("div", { style: { marginBottom: 18 } },
+      h("div", { style: { fontSize: 14, fontWeight: 700, marginBottom: 9 } }, "상위 경계에서 같은 점수로 나타난 강점 · 순위 없음"),
+      h("div", { style: { display: "flex", flexWrap: "wrap", gap: 7 } }, profile.tiedCodes.map(function (code) {
+        var s = strengthByCode(code); return h("span", { key: code, style: { padding: "6px 9px", background: "#fff", border: "1px solid #E2E5E0", borderRadius: 8, fontSize: 12.5 } }, s ? s.name : code);
+      }))
+    ) : null,
+
     /* 상위 5강점 카드 */
     top5.map(function (code, idx) {
       const s = strengthByCode(code);
@@ -1085,7 +1213,7 @@ function ResultScreen(props) {
             flex: "0 0 30px", height: 30, borderRadius: 8, background: color,
             color: "#fff", fontWeight: 700, fontSize: 15,
             display: "flex", alignItems: "center", justifyContent: "center"
-          } }, idx + 1),
+          } }, resultStatus === "normal" ? rankLabel(code, scores) : "•"),
           h("div", { style: { flex: 1 } },
             h("div", { style: { display: "flex", alignItems: "baseline", gap: 6 } },
               h("span", { style: { fontSize: 11.5, color: "#9AA09A" } }, s.virtue),
@@ -1108,12 +1236,12 @@ function ResultScreen(props) {
       );
     }),
 
-    close ? h("div", { style: {
+    resultStatus === "normal" && close ? h("div", { style: {
       marginTop: 4, marginBottom: 8, padding: 13, background: "#EEF1ED",
       borderRadius: 10, fontSize: 12.5, lineHeight: 1.55, color: "#5A615A"
     } }, "상위 강점들의 점수 차이가 크지 않습니다. 순위 자체보다, 이 강점들이 실제 경험에서 어떻게 나타나는지 살펴보는 것이 더 중요합니다.") : null,
 
-    hasHiddenTie ? h("div", { style: {
+    resultStatus === "normal" && hasHiddenTie ? h("div", { style: {
       marginBottom: 8, padding: 13, background: "#EEF1ED",
       borderRadius: 10, fontSize: 12.5, lineHeight: 1.55, color: "#5A615A"
     } }, "같은 점수의 강점이 여러 개 있어, 일부 강점은 아래 전체 순위에서 함께 확인할 수 있습니다.") : null,
@@ -1133,7 +1261,7 @@ function ResultScreen(props) {
           return h("div", { key: r.code, style: { marginBottom: 10 } },
             h("div", { style: { display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 3 } },
               h("span", null,
-                h("span", { style: { color: "#B4B9B4", marginRight: 6 } }, i + 1),
+                resultStatus === "normal" ? h("span", { style: { color: "#B4B9B4", marginRight: 6 } }, rankLabel(r.code, scores)) : null,
                 h("span", { style: { color: "#9AA09A", fontSize: 11.5, marginRight: 5 } }, s.virtue),
                 s.name),
               h("span", { style: { color: "#9AA09A" } }, r.score.toFixed(1))
@@ -1146,27 +1274,27 @@ function ResultScreen(props) {
     ),
 
     /* 조합 해석 보기 (내부 뷰 전환 — 재저장 없음) */
-    h("div", { style: { marginTop: 22 } },
+    resultStatus === "normal" ? h("div", { style: { marginTop: 22 } },
       h(Btn, { onClick: function () { setView("combo"); }, color: "#3E6B52" },
-        "나의 강점 조합 해석 보기")),
+        "나의 강점 조합 해석 보기")) : null,
 
     /* 결과 공유하기 (텍스트 — 카톡·메일) */
     h("div", { style: { marginTop: 26 } },
       h(Btn, { onClick: function () {
-        shareResultText({ nick: resultNick, scores: scores, top5: top5, checks: checks, mode: props.mode, completedAt: completedAt });
+        shareResultText({ nick: resultNick, scores: scores, top5: top5, checks: checks, mode: props.mode, completedAt: completedAt, resultStatus: resultStatus });
       }, color: "#3E6B52" },
         "결과 공유하기 (카톡·메일)")),
 
     /* 결과 PDF로 저장 */
     h("div", { style: { marginTop: 12 } },
       h(Btn, { onClick: function () {
-        downloadResultPDF({ nick: resultNick, scores: scores, top5: top5, checks: checks, mode: props.mode, completedAt: completedAt });
+        downloadResultPDF({ nick: resultNick, scores: scores, top5: top5, checks: checks, mode: props.mode, completedAt: completedAt, resultStatus: resultStatus });
       }, color: "#4A7C8C" },
         "결과 PDF로 저장·인쇄")),
 
     /* PNG 저장 */
     h("div", { style: { marginTop: 12 } },
-      h(Btn, { onClick: function () { downloadResultPNG(resultNick, top5, checks, completedAt, props.mode, participation); }, color: "#4A514A" },
+      h(Btn, { onClick: function () { downloadResultPNG(resultNick, scores, top5, checks, completedAt, props.mode, participation, resultStatus); }, color: "#4A514A" },
         "결과 이미지 저장하기")),
 
     /* 처음으로 — 새로 진단하기 (다른 사람 폰 빌려주는 경우 포함) */
@@ -1186,12 +1314,15 @@ function ResultScreen(props) {
 }
 
 /* ---------- 결과 PNG ---------- */
-function downloadResultPNG(nick, top5, checks, completedAt, mode, participation) {
+function downloadResultPNG(nick, scores, top5, checks, completedAt, mode, participation, resultStatusValue) {
   const W = 720, pad = 48;
+  const profile = analyzeProfile(scores || {});
+  const status = resultStatusType(resultStatusValue || profile.status);
+  const specialCodes = status === "flat" ? STRENGTHS.map(function (s) { return s.code; }) : profile.tiedCodes;
   const cv = document.createElement("canvas");
   const dpr = 2; cv.width = W * dpr;
   const lineH = 104;
-  const H = 340 + top5.length * lineH + 120;
+  const H = status === "normal" ? 340 + top5.length * lineH + 120 : 520 + specialCodes.length * 32;
   cv.height = H * dpr;
   const ctx = cv.getContext("2d");
   ctx.scale(dpr, dpr);
@@ -1200,21 +1331,34 @@ function downloadResultPNG(nick, top5, checks, completedAt, mode, participation)
   ctx.fillStyle = "#8A918A"; ctx.font = "600 15px sans-serif";
   ctx.fillText("강 점 발 견", pad, 60);
   ctx.fillStyle = "#2A2E2A"; ctx.font = "700 30px sans-serif";
-  ctx.fillText(nick + " 님의 대표 강점", pad, 104);
+  ctx.fillText(nick + " 님의 " + (status === "normal" ? "대표 강점" : "결과 안내"), pad, 104);
   ctx.fillStyle = "#7A817A"; ctx.font = "400 15px sans-serif";
   ctx.fillText("나만의 탁월함으로 발전시킬 강점", pad, 134);
   ctx.fillStyle = "#6A716A"; ctx.font = "400 13px sans-serif";
   ctx.fillText("진단 완료: " + formatKoreaTime(completedAt) + " · " + (mode === "72" ? "72문항" : "96문항") + " · " + participationLabel(participation || "first"), pad, 158);
 
   let y = 196;
-  top5.forEach(function (code, idx) {
+  if (status !== "normal") {
+    ctx.fillStyle = "#5A5146"; ctx.font = "400 15px sans-serif";
+    wrapText(ctx, status === "flat" ? NOTE_FLAT : NOTE_AMBIGUOUS, pad, y, W - pad * 2, 23);
+    y += status === "flat" ? 112 : 92;
+    ctx.fillStyle = "#2A2E2A"; ctx.font = "700 17px sans-serif";
+    ctx.fillText(status === "flat" ? "함께 살펴볼 24개 강점 · 순위 없음" : "상위 경계 동점 강점 · 순위 없음", pad, y);
+    y += 30;
+    specialCodes.forEach(function (code) {
+      var s = strengthByCode(code); if (!s) return;
+      ctx.fillStyle = "#2A2E2A"; ctx.font = "600 14px sans-serif"; ctx.fillText("· " + s.name, pad, y);
+      ctx.fillStyle = "#8A918A"; ctx.font = "400 12px sans-serif"; ctx.fillText(s.virtue, pad + 150, y);
+      y += 32;
+    });
+  } else top5.forEach(function (code) {
     const s = strengthByCode(code);
     const color = VIRTUE_COLOR[s.virtue] || "#3E6B52";
     const lab = checkLabel(checks && checks[code]);
     // 번호 박스
     ctx.fillStyle = color; roundRect(ctx, pad, y - 26, 40, 40, 9); ctx.fill();
     ctx.fillStyle = "#fff"; ctx.font = "700 20px sans-serif";
-    ctx.textAlign = "center"; ctx.fillText(idx + 1, pad + 20, y + 1);
+    ctx.textAlign = "center"; ctx.fillText(rankLabel(code, scores), pad + 20, y + 1);
     ctx.textAlign = "left";
     // 강점명 (덕목 + 이름) — 덕목 너비를 13px 상태에서 먼저 측정
     ctx.fillStyle = "#9AA09A"; ctx.font = "400 13px sans-serif";
@@ -1236,7 +1380,7 @@ function downloadResultPNG(nick, top5, checks, completedAt, mode, participation)
   });
 
   ctx.fillStyle = "#9AA09A"; ctx.font = "400 12px sans-serif";
-  wrapText(ctx, "이 결과는 24개 강점 중 현재 상대적으로 두드러진 강점을 보여줍니다. 순위의 미세한 차이보다 실제 경험에서 어떻게 활용되는지를 살펴보세요.", pad, y + 10, W - pad * 2, 18);
+  wrapText(ctx, status === "normal" ? "이 결과는 24개 강점 중 현재 상대적으로 두드러진 강점을 보여줍니다. 순위의 미세한 차이보다 실제 경험에서 어떻게 활용되는지를 살펴보세요." : RESULT_DISCLAIMER, pad, y + 10, W - pad * 2, 18);
 
   // 안내문 아래의 여백에 투명 배경 로고를 원본 비율 그대로 표시합니다.
   ctx.fillStyle = "#E0E5DF"; ctx.fillRect(pad, H - 144, W - pad * 2, 1);
@@ -1370,8 +1514,9 @@ function AdminScreen(props) {
   }
 
   const baseRows = useMemo(function () { return groupBaseRows(rows); }, [rows]);
-  const retakeCount = rows ? rows.length - baseRows.length : 0;
-  /* 그룹 집계: 재진단 표시 응답은 제외. 이름으로 동일인을 추정하지 않음. */
+  const retakeCount = rows ? rows.filter(function (r) { return r.participation === "retake"; }).length : 0;
+  const limitedCount = rows ? rows.filter(function (r) { return resultStatusType(r.resultStatus) !== "normal"; }).length : 0;
+  /* 그룹 집계: 재진단 및 대표 강점을 구분하기 어려운 결과는 제외. 이름으로 동일인을 추정하지 않음. */
   const groupAgg = useMemo(function () {
     if (!baseRows.length) return null;
     const cnt = {}; STRENGTHS.forEach(function (s) { cnt[s.code] = 0; });
@@ -1387,10 +1532,11 @@ function AdminScreen(props) {
 
   function exportCSV() {
     if (!rows || !rows.length) return;
-    const header = ["응답ID", "닉네임", "진단완료시각(한국)", "최초저장시각(한국)", "문항형", "참여구분", "그룹통계포함"].concat(STRENGTHS.map(function (s) { return s.name; }));
+    const header = ["응답ID", "닉네임", "진단완료시각(한국)", "최초저장시각(한국)", "문항형", "참여구분", "결과상태", "그룹통계포함"].concat(STRENGTHS.map(function (s) { return s.name; }));
     const lines = [header.join(",")];
     rows.forEach(function (r) {
-      const row = [csvCell(r.responseId), csvCell(r.nick), r.completedAt ? formatKoreaTime(r.completedAt) : "미기록", formatKoreaTime(r.ts), (r.mode === "72" ? "72문항 간편형" : "96문항 전체형"), participationLabel(r.participation), r.participation === "retake" ? "제외" : "포함"];
+      const included = r.participation !== "retake" && resultStatusType(r.resultStatus) === "normal";
+      const row = [csvCell(r.responseId), csvCell(r.nick), r.completedAt ? formatKoreaTime(r.completedAt) : "미기록", formatKoreaTime(r.ts), (r.mode === "72" ? "72문항 간편형" : "96문항 전체형"), participationLabel(r.participation), resultStatusLabel(r.resultStatus), included ? "포함" : "제외"];
       STRENGTHS.forEach(function (s) {
         const v = r.scores && r.scores[s.code] != null ? r.scores[s.code].toFixed(2) : "";
         row.push(v);
@@ -1504,8 +1650,8 @@ function AdminScreen(props) {
 
       rows.length === 0 ? h("div", { style: { fontSize: 13.5, color: "#9AA09A", padding: "10px 0" } }, "아직 응답이 없습니다.") : null,
       rows.length ? h("div", { style: { fontSize: 12, color: "#6A716A", lineHeight: 1.7, marginBottom: 14 } },
-        "그룹 집계 " + baseRows.length + "건 · 재진단 " + retakeCount + "건 제외. 재진단 여부는 참가자가 선택한 값이며, 이름만으로 동일인을 판단하지 않습니다. 이전 버전의 미구분 기록은 기존처럼 집계합니다.") : null,
-      rows.length && !baseRows.length ? h("p", { style: { fontSize: 13, color: "#7A817A" } }, "현재 재진단 기록만 있어 그룹 통계는 표시하지 않습니다. 개별 결과는 아래에서 확인할 수 있습니다.") : null,
+        "그룹 집계 " + baseRows.length + "건 · 재진단 " + retakeCount + "건 · 대표 강점 구분 어려움 " + limitedCount + "건 제외. 이름만으로 동일인을 판단하지 않습니다.") : null,
+      rows.length && !baseRows.length ? h("p", { style: { fontSize: 13, color: "#7A817A" } }, "현재 그룹 통계에 포함할 수 있는 일반 결과가 없습니다. 개별 결과는 아래에서 확인할 수 있습니다.") : null,
 
       /* 그룹 경향 */
       groupAgg ? h("div", { style: { background: "#fff", borderRadius: 12, padding: 16, marginBottom: 18, border: "1px solid #E8EAE7" } },
@@ -1548,7 +1694,7 @@ function AdminScreen(props) {
           h("div", { style: { padding: "13px 15px", display: "flex", alignItems: "center", gap: 10 } },
             h("button", { onClick: function () { setOpenId(open ? null : r.responseId); }, style: { flex: 1, minWidth: 0, textAlign: "left", background: "none", overflowWrap: "anywhere" } },
               h("div", { style: { fontSize: 15, fontWeight: 700 } }, r.nick),
-              h("div", { style: { fontSize: 11.5, color: r.participation === "retake" ? "#9A6B3E" : "#6A716A", marginTop: 4, lineHeight: 1.6 } }, (r.mode === "72" ? "72문항" : "96문항") + " · " + participationLabel(r.participation) + (r.participation === "retake" ? " · 그룹 집계 제외" : "")),
+              h("div", { style: { fontSize: 11.5, color: (r.participation === "retake" || resultStatusType(r.resultStatus) !== "normal") ? "#9A6B3E" : "#6A716A", marginTop: 4, lineHeight: 1.6 } }, (r.mode === "72" ? "72문항" : "96문항") + " · " + participationLabel(r.participation) + " · " + resultStatusLabel(r.resultStatus) + ((r.participation === "retake" || resultStatusType(r.resultStatus) !== "normal") ? " · 그룹 집계 제외" : "")),
               h("div", { style: { fontSize: 11, color: "#7A817A", marginTop: 3, lineHeight: 1.6 } }, ds),
               h("div", { style: { fontSize: 12, color: "#8A918A", marginTop: 3 } },
                 (r.top5 || []).map(function (c) { const s = strengthByCode(c); return s ? s.name : c; }).join(" · "))
@@ -1559,12 +1705,12 @@ function AdminScreen(props) {
           open ? h("div", { style: { padding: "0 15px 15px" } },
             h("div", { style: { marginBottom: 12 } },
               h(Btn, { onClick: function () {
-                shareResultText({ nick: r.nick, scores: r.scores, top5: r.top5, checks: r.checks, mode: r.mode, completedAt: r.completedAt });
+                shareResultText({ nick: r.nick, scores: r.scores, top5: r.top5, checks: r.checks, mode: r.mode, completedAt: r.completedAt, resultStatus: r.resultStatus });
               }, color: "#3E6B52", style: { fontSize: 13, padding: "11px 14px" } },
                 "이 참가자 결과 공유하기 (카톡·메일)")),
             h("div", { style: { marginBottom: 12 } },
               h(Btn, { onClick: function () {
-                downloadResultPDF({ nick: r.nick, scores: r.scores, top5: r.top5, checks: r.checks, mode: r.mode, completedAt: r.completedAt });
+                downloadResultPDF({ nick: r.nick, scores: r.scores, top5: r.top5, checks: r.checks, mode: r.mode, completedAt: r.completedAt, resultStatus: r.resultStatus });
               }, color: "#4A7C8C", style: { fontSize: 13, padding: "11px 14px" } },
                 "이 참가자 결과 PDF 저장·인쇄")),
             ranked.map(function (rr, i) {
@@ -1575,7 +1721,7 @@ function AdminScreen(props) {
               return h("div", { key: rr.code, style: { marginBottom: 7 } },
                 h("div", { style: { display: "flex", justifyContent: "space-between", fontSize: 12.5, marginBottom: 2 } },
                   h("span", { style: { fontWeight: inTop ? 700 : 400, color: inTop ? "#2A2E2A" : "#6A716A" } },
-                    (i + 1) + ". " + s.name),
+                    (resultStatusType(r.resultStatus) === "normal" ? rankLabel(rr.code, r.scores) + ". " : "") + s.name),
                   h("span", { style: { color: "#9AA09A", fontSize: 11.5 } }, rr.score.toFixed(2))
                 ),
                 h("div", { style: { height: 6, background: "#EAEDE9", borderRadius: 99, overflow: "hidden" } },
@@ -1780,20 +1926,27 @@ function App() {
   const [checks, setChecks] = useState(null);
   const [participation, setParticipation] = useState("first");
   const [completedAt, setCompletedAt] = useState(null);
+  const [resultStatus, setResultStatus] = useState("normal");
 
   function onStart(c, n, selectedMode, kind) {
     var m = selectedMode === "72" ? "72" : "96";
     setCode(c); setNick(n); setMode(m);
-    setParticipation(kind === "retake" ? "retake" : "first"); setCompletedAt(null);
+    setParticipation(kind === "retake" ? "retake" : "first"); setCompletedAt(null); setResultStatus("normal");
     setItems(shuffleSpread(questionItemsForMode(m)));
     setScreen("quiz");
   }
 
   function onQuizDone(ans) {
     const sc = computeScores(ans);
-    var t5 = top5Codes(sc);
-    if (t5.length > 6) t5 = t5.slice(0, 6); // 동점이 매우 많을 때 상한(경험확인·저장 안정)
-    setAnswers(ans); setScores(sc); setTop5(t5); setScreen("check");
+    var profile = analyzeProfile(sc);
+    setAnswers(ans); setScores(sc); setResultStatus(profile.status);
+    if (profile.status === "normal") {
+      setTop5(profile.topCodes); setScreen("check");
+    } else {
+      // 대표 강점의 경계를 신뢰하기 어려우므로 임의로 자르거나 경험확인·조합해석을 만들지 않습니다.
+      setTop5(profile.status === "ambiguous_cutoff" ? profile.clearCodes : []);
+      setChecks({}); setCompletedAt(Date.now()); setScreen("result");
+    }
   }
 
   function onCheckDone(chk) { setChecks(chk); setCompletedAt(Date.now()); setScreen("result"); }
@@ -1813,7 +1966,7 @@ function App() {
   if (screen === "check")
     return h(CheckScreen, { top5: top5, onDone: onCheckDone });
   if (screen === "result")
-    return h(ResultScreen, { code: code, nick: nick, mode: mode, scores: scores, top5: top5, checks: checks, participation: participation, completedAt: completedAt, saved: false, onRestart: function () { setScreen("start"); } });
+    return h(ResultScreen, { code: code, nick: nick, mode: mode, scores: scores, top5: top5, checks: checks, resultStatus: resultStatus, participation: participation, completedAt: completedAt, saved: false, onRestart: function () { setScreen("start"); } });
   return h(StartScreen, { onStart: onStart, onAdmin: function () { setScreen("admin"); } });
 }
 
