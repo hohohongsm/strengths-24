@@ -638,7 +638,6 @@ function CheckScreen(props) {
       },
         h("div", { style: { display: "flex", alignItems: "baseline", gap: 8, marginBottom: 6 } },
           h("span", { style: { fontSize: 12, fontWeight: 700, color: color } }, "강점 " + (idx + 1)),
-          h("span", { style: { fontSize: 12, color: "#9AA09A" } }, s.virtue),
           h("span", { style: { fontSize: 17, fontWeight: 700 } }, s.name)
         ),
         s.def ? h("div", { style: { fontSize: 13, lineHeight: 1.55, color: "#5A615A", marginBottom: 13, paddingBottom: 12, borderBottom: "1px solid #F0F2EF" } }, s.def) : null,
@@ -707,23 +706,23 @@ function buildShareText(data) {
   if (status === "flat") {
     out.push(NOTE_FLAT); out.push("");
     out.push("함께 살펴볼 24개 강점 (순위 없음)"); out.push("");
-    STRENGTHS.forEach(function (s) { out.push("· " + s.name + " 〔" + s.virtue + "〕" + (s.short ? " — " + s.short : "")); });
+    STRENGTHS.forEach(function (s) { out.push("· " + s.name + (s.short ? " — " + s.short : "")); });
     out.push(""); out.push(THIN); out.push("");
   } else if (status === "ambiguous_cutoff") {
     out.push(NOTE_AMBIGUOUS); out.push("");
     if (profile.clearCodes.length) {
       out.push("상대적으로 높게 나타난 강점");
-      profile.clearCodes.forEach(function (code) { var s = strengthByCode(code); if (s) out.push("· " + s.name + " 〔" + s.virtue + "〕"); });
+      profile.clearCodes.forEach(function (code) { var s = strengthByCode(code); if (s) out.push("· " + s.name + (s.short ? " — " + s.short : "")); });
       out.push("");
     }
     out.push("상위 경계에서 같은 점수로 나타난 강점 (순위 없음)");
-    profile.tiedCodes.forEach(function (code) { var s = strengthByCode(code); if (s) out.push("· " + s.name + " 〔" + s.virtue + "〕" + (s.short ? " — " + s.short : "")); });
+    profile.tiedCodes.forEach(function (code) { var s = strengthByCode(code); if (s) out.push("· " + s.name + (s.short ? " — " + s.short : "")); });
     out.push(""); out.push(THIN); out.push("");
   }
   top5.forEach(function (code) {
     var s = strengthByCode(code);
     if (!s) return;
-    out.push((status === "normal" ? rankLabel(code, scores) + "위. " : "") + s.name + "  〔" + s.virtue + "〕");
+    out.push((status === "normal" ? rankLabel(code, scores) + "위. " : "") + s.name);
     if (s.short) out.push("   " + s.short);
     var lab = checkLabel(checks && checks[code]);
     if (lab) out.push("   ✓ " + lab.text);
@@ -832,7 +831,6 @@ function buildResultHTML(data, whiteLogoSrc) {
       + '<div class="bar" style="background:' + color + '"></div>'
       + '<div class="card-in">'
       + '<div class="card-h"><span class="num" style="color:' + color + '">' + (status === "normal" ? rankLabel(code, scores) + "위" : "•") + '</span>'
-      + '<span class="virtue">' + esc(s.virtue) + '</span>'
       + '<span class="name">' + esc(s.name) + '</span></div>'
       + (s.short ? '<div class="short">' + esc(s.short) + '</div>' : "")
       + labHtml
@@ -916,12 +914,12 @@ function buildResultHTML(data, whiteLogoSrc) {
     var clearHtml = "";
     if (status === "ambiguous_cutoff" && profile.clearCodes.length) {
       clearHtml = '<h3>상대적으로 높게 나타난 강점</h3><div class="special-list">' + profile.clearCodes.map(function (code) {
-        var s = strengthByCode(code); return s ? '<div><b>' + esc(s.name) + '</b><span>' + esc(s.virtue) + '</span></div>' : '';
+        var s = strengthByCode(code); return s ? '<div><b>' + esc(s.name) + '</b>' + (s.short ? '<span>' + esc(s.short) + '</span>' : '') + '</div>' : '';
       }).join("") + '</div>';
     }
     specialHtml = '<div class="special"><div class="note strong">' + esc(noteText) + '</div>' + clearHtml
       + '<h3>' + esc(listTitle) + '</h3><div class="special-list">' + listCodes.map(function (code) {
-        var s = strengthByCode(code); return s ? '<div><b>' + esc(s.name) + '</b><span>' + esc(s.virtue) + (s.short ? ' · ' + esc(s.short) : '') + '</span></div>' : '';
+        var s = strengthByCode(code); return s ? '<div><b>' + esc(s.name) + '</b>' + (s.short ? '<span>' + esc(s.short) + '</span>' : '') + '</div>' : '';
       }).join("") + '</div><div class="foot">' + esc(RESULT_DISCLAIMER) + '</div><div class="brand-line">' + esc(BRAND_NAME) + '</div></div>';
     css += '.special h3{font-size:16px;margin:22px 0 10px}.special .strong{font-size:13px;line-height:1.7;background:#FBF2E5;color:#5A5146}.special-list{display:grid;grid-template-columns:1fr 1fr;gap:8px 12px}.special-list>div{border:0.5px solid #E3E6E1;border-radius:8px;padding:9px 10px;break-inside:avoid}.special-list b{font-size:13px;margin-right:7px}.special-list span{font-size:10.5px;color:#858C85}';
   }
@@ -1148,10 +1146,13 @@ function ResultScreen(props) {
 
   // 조합 해석은 ResultScreen 내부 뷰로 전환 → ResultScreen이 언마운트되지 않아
   // responseId·저장상태가 유지되고 재저장이 일어나지 않는다.
-  if (view === "combo")
-    return h(ComboScreen, { top5: top5, completedAt: completedAt, mode: props.mode, onBack: function () { window.history.back(); },
+  if (view === "combo") {
+    // 조합에 넘길 강점: 일반 결과는 상위 강점, 동점 다수는 명확히 높은 강점만(코드순 억지 조합 방지)
+    var comboCodes = resultStatus === "normal" ? top5 : (profile.clearCodes || []);
+    return h(ComboScreen, { top5: comboCodes, completedAt: completedAt, mode: props.mode, onBack: function () { window.history.back(); },
       shareData: { nick: resultNick, scores: scores, top5: top5, checks: checks, mode: props.mode, completedAt: completedAt, resultStatus: resultStatus },
       onSavePNG: function () { downloadResultPNG(resultNick, scores, top5, checks, completedAt, props.mode, participation, resultStatus); } });
+  }
 
   return h("div", { className: "wrap", style: { padding: "30px 18px 60px" } },
     h("div", { style: { fontSize: 12, letterSpacing: 3, color: "#8A918A", fontWeight: 600 } }, "나의 강점발견"),
@@ -1183,55 +1184,75 @@ function ResultScreen(props) {
       border: "1px solid #E6D3B1", color: "#5A5146", fontSize: 13.5, lineHeight: 1.7
     } }, resultStatus === "flat" ? NOTE_FLAT : NOTE_AMBIGUOUS) : null,
 
-    resultStatus === "ambiguous_cutoff" && profile.tiedCodes.length ? h("div", { style: { marginBottom: 18 } },
-      h("div", { style: { fontSize: 14, fontWeight: 700, marginBottom: 9 } }, "상위 경계에서 같은 점수로 나타난 강점 · 순위 없음"),
-      h("div", { style: { display: "flex", flexWrap: "wrap", gap: 7 } }, profile.tiedCodes.map(function (code) {
-        var s = strengthByCode(code); return h("span", { key: code, style: { padding: "6px 9px", background: "#fff", border: "1px solid #E2E5E0", borderRadius: 8, fontSize: 12.5 } }, s ? s.name : code);
-      }))
-    ) : null,
-
-    /* 상위 5강점 카드 */
-    top5.map(function (code, idx) {
-      const s = strengthByCode(code);
-      const color = VIRTUE_COLOR[s.virtue] || "#3E6B52";
-      const lab = checkLabel(checks && checks[code]);
-      const open = openCode === code;
-      return h("div", {
-        key: code,
-        style: { background: "#fff", borderRadius: 14, marginBottom: 12,
-          border: "1px solid #E8EAE7", overflow: "hidden" }
-      },
-        h("button", {
-          onClick: function () { setOpenCode(open ? null : code); },
-          style: { width: "100%", textAlign: "left", background: "none",
-            padding: "16px 16px", display: "flex", alignItems: "center", gap: 12 }
+    /* 강점 상세 카드 렌더 (상위 강점·동점 강점 공용) */
+    (function () {
+      function strengthCard(code, opts) {
+        opts = opts || {};
+        const s = strengthByCode(code);
+        if (!s) return null;
+        const color = VIRTUE_COLOR[s.virtue] || "#3E6B52";
+        const lab = checkLabel(checks && checks[code]);
+        const open = openCode === code;
+        const badge = opts.badge != null ? opts.badge : (resultStatus === "normal" ? rankLabel(code, scores) : "•");
+        return h("div", {
+          key: code,
+          style: { background: "#fff", borderRadius: 14, marginBottom: 12,
+            border: "1px solid #E8EAE7", overflow: "hidden" }
         },
-          h("div", { style: {
-            flex: "0 0 30px", height: 30, borderRadius: 8, background: color,
-            color: "#fff", fontWeight: 700, fontSize: 15,
-            display: "flex", alignItems: "center", justifyContent: "center"
-          } }, resultStatus === "normal" ? rankLabel(code, scores) : "•"),
-          h("div", { style: { flex: 1 } },
-            h("div", { style: { display: "flex", alignItems: "baseline", gap: 6 } },
-              h("span", { style: { fontSize: 11.5, color: "#9AA09A" } }, s.virtue),
-              h("span", { style: { fontSize: 17, fontWeight: 700 } }, s.name)),
-            s.subtitle ? h("div", { style: { fontSize: 12, color: "#8A918A", marginTop: 1 } }, s.subtitle) : null,
-            lab ? h("div", { style: { fontSize: 12, color: lab.color, fontWeight: 600, marginTop: 3 } }, lab.text) : null
+          h("button", {
+            onClick: function () { setOpenCode(open ? null : code); },
+            style: { width: "100%", textAlign: "left", background: "none",
+              padding: "16px 16px", display: "flex", alignItems: "center", gap: 12 }
+          },
+            h("div", { style: {
+              flex: "0 0 30px", height: 30, borderRadius: 8, background: color,
+              color: "#fff", fontWeight: 700, fontSize: 15,
+              display: "flex", alignItems: "center", justifyContent: "center"
+            } }, badge),
+            h("div", { style: { flex: 1 } },
+              h("div", { style: { display: "flex", alignItems: "baseline", gap: 6 } },
+                h("span", { style: { fontSize: 17, fontWeight: 700 } }, s.name),
+                opts.showScore && scores && scores[code] != null ? h("span", { style: { fontSize: 13, color: "#9AA09A", fontWeight: 600 } }, scores[code].toFixed(1)) : null),
+              s.short ? h("div", { style: { fontSize: 12.5, color: "#8A918A", marginTop: 2, lineHeight: 1.45 } }, s.short) : null,
+              s.subtitle ? h("div", { style: { fontSize: 12, color: "#8A918A", marginTop: 1 } }, s.subtitle) : null,
+              lab ? h("div", { style: { fontSize: 12, color: lab.color, fontWeight: 600, marginTop: 3 } }, lab.text) : null
+            ),
+            h("div", { style: { color: "#B4B9B4", fontSize: 13, display: "flex", alignItems: "center", gap: 4 } },
+              opts.detailHint && !open ? h("span", { style: { fontSize: 12, color: "#8A918A" } }, "자세히 보기") : null,
+              open ? "▲" : "▼")
           ),
-          h("div", { style: { color: "#B4B9B4", fontSize: 13 } }, open ? "▲" : "▼")
-        ),
-        open ? h("div", { style: { padding: "0 16px 18px" } },
-          SECTION_ORDER.map(function (sec) {
-            const txt = s.sections[sec.key];
-            if (!txt) return null;
-            return h("div", { key: sec.key, style: { marginTop: 14 } },
-              h("div", { style: { fontSize: 12.5, fontWeight: 700, color: color, marginBottom: 4 } }, sec.label),
-              h("div", { style: { fontSize: 14, lineHeight: 1.62, color: "#3E453E" } }, txt)
-            );
-          })
+          open ? h("div", { style: { padding: "0 16px 18px" } },
+            SECTION_ORDER.map(function (sec) {
+              const txt = s.sections[sec.key];
+              if (!txt) return null;
+              return h("div", { key: sec.key, style: { marginTop: 14 } },
+                h("div", { style: { fontSize: 12.5, fontWeight: 700, color: color, marginBottom: 4 } }, sec.label),
+                h("div", { style: { fontSize: 14, lineHeight: 1.62, color: "#3E453E" } }, txt)
+              );
+            })
+          ) : null
+        );
+      }
+
+      return h("div", null,
+        /* 상대적으로 가장 높게 나타난 강점 (또는 일반 결과의 상위 강점) */
+        (resultStatus === "ambiguous_cutoff" && profile.clearCodes.length) ? h("div", { style: { marginBottom: 6 } },
+          h("div", { style: { fontSize: 14, fontWeight: 700, marginBottom: 9 } }, "상대적으로 가장 높게 나타난 강점")) : null,
+        top5.map(function (code) { return strengthCard(code, { showScore: resultStatus !== "normal", detailHint: true }); }),
+
+        /* 같은 점수로 함께 나타난 강점 · 순위 없음 (동점 다수) */
+        (resultStatus === "ambiguous_cutoff" && profile.tiedCodes.length) ? h("div", { style: { marginTop: 20 } },
+          h("div", { style: { fontSize: 14, fontWeight: 700, marginBottom: 4 } }, "같은 점수로 함께 나타난 강점 · 순위 없음"),
+          h("div", { style: { fontSize: 12.5, color: "#7A817A", marginBottom: 11, lineHeight: 1.6 } }, "아래 강점은 같은 점수로 나타났습니다. 순위 없이 함께 살펴보며, 최근 6개월의 실제 경험에서 자주 그리고 자연스럽게 발휘된 강점을 찾아보세요."),
+          profile.tiedCodes.map(function (code) { return strengthCard(code, { badge: "•", showScore: true, detailHint: true }); })
+        ) : null,
+
+        /* 전체 평탄 결과: 24강점을 순위 없이 모두 카드로 */
+        (resultStatus === "flat") ? h("div", { style: { marginTop: 4 } },
+          ranked.map(function (r) { return strengthCard(r.code, { badge: "•", showScore: true, detailHint: true }); })
         ) : null
       );
-    }),
+    })(),
 
     resultStatus === "normal" && close ? h("div", { style: {
       marginTop: 4, marginBottom: 8, padding: 13, background: "#EEF1ED",
@@ -1259,8 +1280,8 @@ function ResultScreen(props) {
             h("div", { style: { display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 3 } },
               h("span", null,
                 resultStatus === "normal" ? h("span", { style: { color: "#B4B9B4", marginRight: 6 } }, rankLabel(r.code, scores)) : null,
-                h("span", { style: { color: "#9AA09A", fontSize: 11.5, marginRight: 5 } }, s.virtue),
-                s.name),
+                h("span", { style: { fontWeight: 600 } }, s.name),
+                s.short ? h("span", { style: { color: "#9AA09A", fontSize: 11.5, marginLeft: 6 } }, "· " + s.short) : null),
               h("span", { style: { color: "#9AA09A" } }, r.score.toFixed(1))
             ),
             h("div", { style: { height: 7, background: "#EAEDE9", borderRadius: 99, overflow: "hidden" } },
@@ -1270,10 +1291,26 @@ function ResultScreen(props) {
       ) : null
     ),
 
-    /* 조합 해석 보기 (내부 뷰 전환 — 재저장 없음) */
-    resultStatus === "normal" ? h("div", { style: { marginTop: 22 } },
-      h(Btn, { onClick: function () { setView("combo"); }, color: "#3E6B52" },
-        "나의 강점 조합 해석 보기")) : null,
+    /* 조합 해석 보기 (내부 뷰 전환 — 재저장 없음)
+       명확히 높은 강점이 2개 이상일 때만 조합을 만든다.
+       1개뿐이거나 평탄한 결과에서는 조합 대신 안내문을 표시한다. */
+    (function () {
+      var comboCodes = resultStatus === "normal"
+        ? top5
+        : (profile.clearCodes && profile.clearCodes.length >= 2 ? profile.clearCodes : []);
+      if (comboCodes.length >= 2) {
+        return h("div", { style: { marginTop: 22 } },
+          h(Btn, { onClick: function () { setView("combo"); }, color: "#3E6B52" },
+            "나의 강점 조합 해석 보기"));
+      }
+      if (resultStatus !== "normal") {
+        return h("div", { style: {
+          marginTop: 22, padding: 14, background: "#EEF1ED", borderRadius: 10,
+          fontSize: 12.5, lineHeight: 1.6, color: "#5A615A"
+        } }, "두 번째 대표 강점을 분명하게 정하기 어려워 강점 조합은 제시하지 않습니다. 위 상세 해석을 살펴보며 실제 경험에 가까운 강점을 발견해 보세요.");
+      }
+      return null;
+    })(),
 
     /* 결과 공유하기 (텍스트 — 카톡·메일) */
     h("div", { style: { marginTop: 26 } },
@@ -1345,7 +1382,7 @@ function downloadResultPNG(nick, scores, top5, checks, completedAt, mode, partic
     specialCodes.forEach(function (code) {
       var s = strengthByCode(code); if (!s) return;
       ctx.fillStyle = "#2A2E2A"; ctx.font = "600 14px sans-serif"; ctx.fillText("· " + s.name, pad, y);
-      ctx.fillStyle = "#8A918A"; ctx.font = "400 12px sans-serif"; ctx.fillText(s.virtue, pad + 150, y);
+      if (s.short) { ctx.fillStyle = "#8A918A"; ctx.font = "400 12px sans-serif"; ctx.fillText(s.short, pad + 100, y); }
       y += 32;
     });
   } else top5.forEach(function (code) {
@@ -1357,12 +1394,9 @@ function downloadResultPNG(nick, scores, top5, checks, completedAt, mode, partic
     ctx.fillStyle = "#fff"; ctx.font = "700 20px sans-serif";
     ctx.textAlign = "center"; ctx.fillText(rankLabel(code, scores), pad + 20, y + 1);
     ctx.textAlign = "left";
-    // 강점명 (덕목 + 이름) — 덕목 너비를 13px 상태에서 먼저 측정
-    ctx.fillStyle = "#9AA09A"; ctx.font = "400 13px sans-serif";
-    var virtueW = ctx.measureText(s.virtue).width;
-    ctx.fillText(s.virtue, pad + 58, y - 6);
+    // 강점명 (덕목 표기 없이 이름만)
     ctx.fillStyle = "#2A2E2A"; ctx.font = "700 23px sans-serif";
-    ctx.fillText(s.name, pad + 58 + virtueW + 8, y - 4);
+    ctx.fillText(s.name, pad + 58, y - 4);
     // 짧은 설명
     if (s.short) {
       ctx.fillStyle = "#5A615A"; ctx.font = "400 14px sans-serif";
