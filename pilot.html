@@ -745,6 +745,8 @@ function buildShareText(data) {
     out.push(NOTE_FLAT); out.push("");
     out.push("함께 살펴볼 24개 강점 (순위 없음)"); out.push("");
     STRENGTHS.forEach(function (s) { out.push("· " + s.name + (s.short ? " — " + s.short : "")); });
+    out.push("");
+    out.push("자세한 해석은 앱 결과 화면에서 확인할 수 있습니다.");
     out.push(""); out.push(THIN); out.push("");
   } else if (status === "ambiguous_cutoff") {
     out.push(NOTE_AMBIGUOUS); out.push("");
@@ -753,8 +755,10 @@ function buildShareText(data) {
       profile.clearCodes.forEach(function (code) { var s = strengthByCode(code); if (s) out.push("· " + s.name + (s.short ? " — " + s.short : "")); });
       out.push("");
     }
-    out.push("상위 경계에서 같은 점수로 나타난 강점 (순위 없음)");
+    out.push("같은 점수로 함께 나타난 강점 (순위 없음)");
     profile.tiedCodes.forEach(function (code) { var s = strengthByCode(code); if (s) out.push("· " + s.name + (s.short ? " — " + s.short : "")); });
+    out.push("");
+    out.push("같은 점수로 나타난 강점의 상세 해석은 앱 결과 화면과 PDF에서 확인할 수 있습니다.");
     out.push(""); out.push(THIN); out.push("");
   }
   top5.forEach(function (code) {
@@ -850,15 +854,13 @@ function buildResultHTML(data, whiteLogoSrc) {
   var when = data.completedAt ? esc(formatKoreaTime(data.completedAt)) : "";
   var SEC = SECTION_ORDER;
 
-  var cards = "";
-  top5.forEach(function (code) {
+  // 상세 카드 1장 생성 (덕목명 미표시). rankBadge=순위 표기 여부.
+  function detailCard(code, rankBadge) {
     var s = strengthByCode(code);
-    if (!s) return;
+    if (!s) return "";
     var color = VIRTUE_COLOR[s.virtue] || "#3E6B52";
     var lab = checkLabel(checks && checks[code]);
-    var labHtml = lab
-      ? '<span class="chk">\u2713 ' + esc(lab.text) + '</span>'
-      : "";
+    var labHtml = lab ? '<span class="chk">\u2713 ' + esc(lab.text) + '</span>' : "";
     var secHtml = "";
     SEC.forEach(function (sec) {
       var txt = s.sections && s.sections[sec.key];
@@ -866,16 +868,21 @@ function buildResultHTML(data, whiteLogoSrc) {
       secHtml += '<div class="sec"><div class="sec-t" style="color:' + color + '">' + esc(sec.label) + '</div>'
         + '<div class="sec-b">' + esc(txt) + '</div></div>';
     });
-    cards += '<div class="card">'
+    var badge = rankBadge ? (rankLabel(code, scores) + "위") : "\u2022";
+    return '<div class="card">'
       + '<div class="bar" style="background:' + color + '"></div>'
       + '<div class="card-in">'
-      + '<div class="card-h"><span class="num" style="color:' + color + '">' + (status === "normal" ? rankLabel(code, scores) + "위" : "•") + '</span>'
-      + '<span class="name">' + esc(s.name) + '</span></div>'
+      + '<div class="card-h"><span class="num" style="color:' + color + '">' + badge + '</span>'
+      + '<span class="name">' + esc(s.name) + '</span>'
+      + (scores[code] != null ? '<span class="cscore">' + scores[code].toFixed(1) + '</span>' : '')
+      + '</div>'
       + (s.short ? '<div class="short">' + esc(s.short) + '</div>' : "")
       + labHtml
       + '<div class="secs">' + secHtml + '</div>'
       + '</div></div>';
-  });
+  }
+  var cards = "";
+  top5.forEach(function (code) { cards += detailCard(code, status === "normal"); });
 
   /* 조합 */
   var comboHtml = "";
@@ -895,12 +902,11 @@ function buildResultHTML(data, whiteLogoSrc) {
     comboHtml = '<div class="combo-page">'
       + '<div class="eyebrow">조합 해석</div>'
       + '<h2 class="combo-title">나의 상위 강점이 연결되는 방식</h2>'
+      + '<div class="combo-intro">상위 강점 가운데 서로 다른 역할을 하며 함께 발휘되는 모습을 살펴보기 좋은 대표 조합을 선별했습니다. 조합의 순위가 아니므로 실제 경험과 얼마나 맞는지 확인해 보세요.</div>'
       + (synBlocks ? '<div class="cmb-sec-t syn-t">함께 발휘될 때</div>' + synBlocks : "")
       + (balBlocks ? '<div class="cmb-sec-t bal-t">균형 있게 살펴볼 점</div>' + balBlocks : "")
       + (isCloseAtCut(scores) ? '<div class="note">' + esc(NOTE_CLOSE) + '</div>' : '')
       + (hasHiddenTieFor(scores, top5) ? '<div class="note">' + esc(NOTE_HIDDEN_TIE) + '</div>' : '')
-      + '<div class="foot">' + esc(RESULT_DISCLAIMER) + '</div>'
-      + '<div class="brand-line">' + esc(BRAND_NAME) + '</div>'
       + '</div>';
   }
 
@@ -923,6 +929,7 @@ function buildResultHTML(data, whiteLogoSrc) {
     + '.bar { width:5px; flex:0 0 5px; }'
     + '.card-in { padding:16px 18px 18px; flex:1; }'
     + '.card-h { display:flex; align-items:baseline; gap:8px; }'
+    + '.card-h .cscore { font-size:13px; color:#9AA09A; font-weight:600; margin-left:8px; }'
     + '.num { font-size:17px; font-weight:700; }'
     + '.virtue { font-size:12px; color:#9AA09A; }'
     + '.name { font-size:18px; font-weight:700; color:#2A2E2A; }'
@@ -933,7 +940,8 @@ function buildResultHTML(data, whiteLogoSrc) {
     + '.sec-t { font-size:12px; font-weight:700; margin-bottom:3px; }'
     + '.sec-b { font-size:13px; line-height:1.66; color:#3E453E; }'
     + '.combo-page { page-break-before:always; padding-top:4px; }'
-    + '.combo-title { font-size:20px; font-weight:700; color:#2A2E2A; margin:2px 0 16px; }'
+    + '.combo-title { font-size:20px; font-weight:700; color:#2A2E2A; margin:2px 0 10px; }'
+    + '.combo-intro { font-size:11.5px; color:#7A817A; line-height:1.6; margin-bottom:14px; }'
     + '.cmb-sec-t { font-size:13px; font-weight:700; margin:16px 0 9px; }'
     + '.syn-t { color:#3E6B52; } .bal-t { color:#9A6B3E; }'
     + '.cmb { border-radius:10px; padding:14px 15px; margin-bottom:10px; page-break-inside:avoid; }'
@@ -943,25 +951,49 @@ function buildResultHTML(data, whiteLogoSrc) {
     + '.cmb-tag-b { display:inline-block; font-size:11.5px; font-weight:700; color:#9A6B3E; margin-bottom:7px; }'
     + '.cmb-b { font-size:13px; line-height:1.66; color:#3E453E; }'
     + '.note { margin-top:14px; padding:11px 13px; background:#EEF1ED; border-radius:8px; font-size:12px; line-height:1.55; color:#5A615A; page-break-inside:avoid; }'
-    + '.foot { margin-top:20px; padding-top:14px; border-top:0.5px solid #E0E3DF; font-size:11.5px; line-height:1.6; color:#9AA09A; }'
-    + '.brand-line { margin-top:12px; text-align:center; font-size:11px; color:#9AA09A; }';
+    + '.foot { margin-top:20px; padding-top:14px; border-top:0.5px solid #E0E3DF; font-size:11.5px; line-height:1.6; color:#9AA09A; }';
+
+  // 24개 전체 강점 순위·점수표 (공동순위, 코드순 임의구분 없음)
+  var rankMap = competitionRankMap(scores);
+  var rankedAll = STRENGTHS.map(function (s) { return { code: s.code, score: scores[s.code] }; })
+    .sort(function (a, b) { return (b.score || 0) - (a.score || 0); });
+  var allTableRows = rankedAll.map(function (r) {
+    var s = strengthByCode(r.code); if (!s) return "";
+    var rankCell = status === "flat" ? "\u2013" : (rankMap[r.code] + "위");
+    return '<tr><td class="rk">' + rankCell + '</td><td class="nm">' + esc(s.name) + '</td>'
+      + '<td class="sh">' + esc(s.short || "") + '</td><td class="sc">' + (r.score != null ? r.score.toFixed(1) : "\u2013") + '</td></tr>';
+  }).join("");
+  var allTableHtml = '<div class="alltable"><h3>나의 24개 강점 전체 보기</h3>'
+    + (status === "flat" ? '<div class="tnote">전체 점수 폭이 좁아 순위는 표시하지 않습니다. 점수와 짧은 정의를 참고해 살펴보세요.</div>' : '')
+    + '<table><thead><tr><th class="rk">순위</th><th class="nm">강점</th><th class="sh">짧은 정의</th><th class="sc">점수</th></tr></thead><tbody>'
+    + allTableRows + '</tbody></table></div>';
+  css += '.alltable{margin-top:26px;break-inside:avoid}.alltable h3{font-size:16px;margin:0 0 10px}.alltable .tnote{font-size:11px;color:#858C85;margin-bottom:8px}'
+    + '.alltable table{width:100%;border-collapse:collapse;font-size:11.5px}.alltable th{text-align:left;color:#8A918A;font-weight:600;border-bottom:1px solid #E3E6E1;padding:6px 6px}'
+    + '.alltable td{padding:6px 6px;border-bottom:0.5px solid #EEF0ED}.alltable .rk{width:52px;color:#6A716A}.alltable .nm{width:78px;font-weight:600}.alltable .sh{color:#7A817A}.alltable .sc{width:44px;text-align:right;color:#5A615A;font-weight:600}.alltable tr{break-inside:avoid}';
 
   var specialHtml = "";
   if (status !== "normal") {
     var noteText = status === "flat" ? NOTE_FLAT : NOTE_AMBIGUOUS;
-    var listCodes = status === "flat" ? STRENGTHS.map(function (s) { return s.code; }) : profile.tiedCodes;
-    var listTitle = status === "flat" ? "함께 살펴볼 24개 강점 · 순위 없음" : "상위 경계에서 같은 점수로 나타난 강점 · 순위 없음";
-    var clearHtml = "";
-    if (status === "ambiguous_cutoff" && profile.clearCodes.length) {
-      clearHtml = '<h3>상대적으로 높게 나타난 강점</h3><div class="special-list">' + profile.clearCodes.map(function (code) {
-        var s = strengthByCode(code); return s ? '<div><b>' + esc(s.name) + '</b>' + (s.short ? '<span>' + esc(s.short) + '</span>' : '') + '</div>' : '';
-      }).join("") + '</div>';
+    var special = '<div class="special"><div class="note strong">' + esc(noteText) + '</div></div>';
+    if (status === "ambiguous_cutoff") {
+      // clearCodes + tiedCodes 모두 6개 상세 해석 카드
+      var clearCards = (profile.clearCodes || []).map(function (code) { return detailCard(code, false); }).join("");
+      var tiedCards = (profile.tiedCodes || []).map(function (code) { return detailCard(code, false); }).join("");
+      special += (clearCards ? '<h3 class="sec-title">상대적으로 가장 높게 나타난 강점</h3>' + clearCards : "")
+        + (tiedCards ? '<h3 class="sec-title">같은 점수로 함께 나타난 강점 · 순위 없음</h3>' + tiedCards : "");
+    } else {
+      // flat: 24개 def + 짧은 정의 목록 + 앱 안내 (6개 항목은 너무 길어 생략)
+      var defList = STRENGTHS.map(function (s) {
+        return '<div class="dfrow"><b>' + esc(s.name) + '</b><span class="dfshort">' + esc(s.short || "") + '</span>'
+          + '<div class="dfdef">' + esc(s.def || "") + '</div></div>';
+      }).join("");
+      special += '<h3 class="sec-title">24개 강점 살펴보기</h3><div class="deflist">' + defList + '</div>'
+        + '<div class="applink">각 강점의 자세한 해석(직장·관계에서의 모습, 균형 있게 활용하는 법 등)은 앱 결과 화면에서 펼쳐 볼 수 있습니다.</div>';
     }
-    specialHtml = '<div class="special"><div class="note strong">' + esc(noteText) + '</div>' + clearHtml
-      + '<h3>' + esc(listTitle) + '</h3><div class="special-list">' + listCodes.map(function (code) {
-        var s = strengthByCode(code); return s ? '<div><b>' + esc(s.name) + '</b>' + (s.short ? '<span>' + esc(s.short) + '</span>' : '') + '</div>' : '';
-      }).join("") + '</div><div class="foot">' + esc(RESULT_DISCLAIMER) + '</div><div class="brand-line">' + esc(BRAND_NAME) + '</div></div>';
-    css += '.special h3{font-size:16px;margin:22px 0 10px}.special .strong{font-size:13px;line-height:1.7;background:#FBF2E5;color:#5A5146}.special-list{display:grid;grid-template-columns:1fr 1fr;gap:8px 12px}.special-list>div{border:0.5px solid #E3E6E1;border-radius:8px;padding:9px 10px;break-inside:avoid}.special-list b{font-size:13px;margin-right:7px}.special-list span{font-size:10.5px;color:#858C85}';
+    css += '.sec-title{font-size:16px;margin:22px 0 10px}.special .strong{font-size:13px;line-height:1.7;background:#FBF2E5;color:#5A5146;padding:12px 14px;border-radius:8px}'
+      + '.deflist{display:grid;gap:8px}.dfrow{border:0.5px solid #E3E6E1;border-radius:8px;padding:9px 11px;break-inside:avoid}.dfrow b{font-size:12.5px;margin-right:7px}.dfrow .dfshort{font-size:10.5px;color:#858C85}.dfrow .dfdef{font-size:11px;color:#5A615A;margin-top:3px;line-height:1.55}'
+      + '.applink{font-size:11px;color:#7A817A;margin-top:12px;padding:10px 12px;background:#EEF1ED;border-radius:8px}';
+    specialHtml = special;
   }
 
   var starsSvg = '<svg class="stars" viewBox="0 0 300 424" preserveAspectRatio="xMidYMid slice" aria-hidden="true">'
@@ -987,7 +1019,12 @@ function buildResultHTML(data, whiteLogoSrc) {
     + '<div class="cbrand">' + (whiteLogoSrc ? '<img src="' + whiteLogoSrc + '" alt="' + esc(BRAND_NAME) + '">' : '') + '</div></div>';
 
   var bodyInner = '<div class="body"><div class="eyebrow">' + (status === "normal" ? '나의 대표 강점' : '결과 안내') + '</div>'
-    + (status === "normal" ? cards + comboHtml : specialHtml + comboHtml) + '</div>';
+    + (status === "normal" ? cards : specialHtml)
+    + comboHtml
+    + allTableHtml
+    + '<div class="foot">' + esc(RESULT_DISCLAIMER) + '</div>'
+    + '</div>';
+  css += '.foot{margin-top:24px;font-size:10.5px;color:#8A918A;line-height:1.6;break-inside:avoid}';
 
   return '<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8">'
     + '<meta name="viewport" content="width=device-width, initial-scale=1">'
@@ -1373,7 +1410,7 @@ function ResultScreen(props) {
     /* PNG 저장 */
     h("div", { style: { marginTop: 12 } },
       h(Btn, { onClick: function () { downloadResultPNG(resultNick, scores, top5, checks, completedAt, props.mode, participation, resultStatus); }, color: "#4A514A" },
-        "결과 이미지 저장하기")),
+        "결과 요약 이미지 저장하기")),
 
     /* 처음으로 — 새로 진단하기 (다른 사람 폰 빌려주는 경우 포함) */
     props.onRestart ? h("div", { style: { marginTop: 12 } },
@@ -1995,7 +2032,7 @@ function ComboScreen(props) {
     h("h1", { style: { fontSize: 22, fontWeight: 700, margin: "8px 0 4px" } }, "나의 상위 강점이 연결되는 방식"),
     props.completedAt ? h("div", { style: { fontSize: 11.5, color: "#7A817A", lineHeight: 1.6, margin: "8px 0" } }, "진단 완료: " + formatKoreaTime(props.completedAt) + " · " + (props.mode === "72" ? "72문항" : "96문항")) : null,
     h("p", { style: { fontSize: 13.5, color: "#7A817A", marginBottom: 18, lineHeight: 1.6 } },
-      "여러 강점이 함께 작동할 때 나타나는 모습입니다. 아래는 검토된 해석 문장으로, 실제 경험에 비추어 살펴보시면 도움이 됩니다."),
+      "상위 강점 가운데 서로 다른 역할을 하며 함께 발휘되는 모습을 살펴보기 좋은 대표 조합을 선별했습니다. 조합의 순위가 아니므로 실제 경험과 얼마나 맞는지 확인해 보세요."),
 
     /* 시너지 */
     h("div", { style: { fontSize: 13, fontWeight: 700, color: "#3E6B52", margin: "6px 0 10px" } }, "함께 발휘될 때"),
@@ -2037,7 +2074,7 @@ function ComboScreen(props) {
         "결과 PDF로 저장·인쇄")) : null,
     props.onSavePNG ? h("div", { style: { marginTop: 12 } },
       h(Btn, { onClick: function () { props.onSavePNG(); }, color: "#4A514A" },
-        "결과 이미지 저장하기")) : null,
+        "결과 요약 이미지 저장하기")) : null,
 
     h("div", { style: { marginTop: 12 } },
       h(Btn, { onClick: function () { props.onBack(); }, color: "#6E7891" }, "강점 순위로 돌아가기")),
