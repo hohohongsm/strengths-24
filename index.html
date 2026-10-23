@@ -1133,7 +1133,11 @@ function ResultScreen(props) {
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState(false);
+  const [copyMsg, setCopyMsg] = useState("");
   const savingRef = useRef(false);
+  // PC(터치 미지원)에서만 '클립보드 복사' 버튼을 노출: 카톡 등에 바로 붙여넣기 용도
+  const canCopyImage = (typeof window !== "undefined") && !(("ontouchstart" in window) || (navigator.maxTouchPoints > 0))
+    && !!(navigator.clipboard && window.ClipboardItem);
   const [resultNick, setResultNick] = useState(props.nick);
   const [participation, setParticipation] = useState(props.participation === "retake" ? "retake" : "first");
   const [nameConflict, setNameConflict] = useState(false);
@@ -1456,6 +1460,18 @@ function ResultScreen(props) {
       h(Btn, { onClick: function () { downloadResultPNG(resultNick, scores, top5, checks, completedAt, props.mode, participation, resultStatus); }, color: "#4A514A" },
         "결과 요약 이미지 저장하기")),
 
+    /* PC 전용: 이미지 클립보드 복사 (카톡 등에 Ctrl+V) */
+    canCopyImage ? h("div", { style: { marginTop: 12 } },
+      h(Btn, { onClick: function () {
+        setCopyMsg("복사 중…");
+        downloadResultPNG(resultNick, scores, top5, checks, completedAt, props.mode, participation, resultStatus,
+          { copyToClipboard: true, onCopyDone: function (ok) {
+            setCopyMsg(ok ? "이미지를 복사했습니다. 카톡·메일 등에 붙여넣기(Ctrl+V) 하세요." : "복사를 지원하지 않는 환경입니다. ‘이미지 저장하기’로 파일을 받아 전송해 주세요.");
+          } });
+      }, color: "#6A716A" },
+        "결과 요약 이미지 복사하기 (PC)"),
+      copyMsg ? h("div", { style: { fontSize: 12, color: "#5A615A", marginTop: 6, lineHeight: 1.5 } }, copyMsg) : null) : null,
+
     /* 처음으로 — 새로 진단하기 (다른 사람 폰 빌려주는 경우 포함) */
     props.onRestart ? h("div", { style: { marginTop: 12 } },
       h(Btn, { onClick: function () {
@@ -1473,7 +1489,7 @@ function ResultScreen(props) {
 }
 
 /* ---------- 결과 PNG (요약 이미지) ---------- */
-function downloadResultPNG(nick, scores, top5, checks, completedAt, mode, participation, resultStatusValue) {
+function downloadResultPNG(nick, scores, top5, checks, completedAt, mode, participation, resultStatusValue, opts) {
   const W = 720, pad = 48;
   const profile = analyzeProfile(scores || {});
   const status = resultStatusType(resultStatusValue || profile.status);
@@ -1595,16 +1611,49 @@ function downloadResultPNG(nick, scores, top5, checks, completedAt, mode, partic
   const stamp = formatKoreaTime(completedAt).replace(/[^0-9]/g, "");
   const safeNick = nick.replace(/[\\/:*?"<>|\r\n]/g, "_");
   const filename = "강점발견_" + safeNick + (stamp ? "_" + stamp : "") + ".png";
-  cv.toBlob(function (blob) {
-    const file = new File([blob], filename, { type: "image/png" });
-    if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
-      navigator.share({ files: [file], title: "강점발견 결과" }).catch(function () { dl(); });
-    } else { dl(); }
-    function dl() {
+  // 모바일: 공유 시트 우선. PC(터치 미지원)·공유 불가: 파일 다운로드로 바로 저장.
+  function dl() {
+    try {
       const a = document.createElement("a");
-      a.download = filename; a.href = cv.toDataURL("image/png"); a.click();
+      a.download = filename; a.href = cv.toDataURL("image/png");
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    } catch (e) {
+      // 최후 수단: 새 탭에 이미지를 열어 사용자가 길게 눌러 저장
+      try { window.open(cv.toDataURL("image/png"), "_blank"); } catch (e2) {}
+      alert("이미지를 자동으로 저장하지 못했습니다. 화면에 열린 이미지를 길게 눌러(또는 우클릭) 저장해 주세요.");
     }
-  });
+  }
+  // 모바일 기기(터치 + 좁은 화면)에서만 공유 시트를 시도한다. PC는 곧바로 다운로드.
+  var isMobile = (("ontouchstart" in window) || (navigator.maxTouchPoints > 0)) &&
+                 (window.matchMedia && window.matchMedia("(max-width: 820px)").matches);
+  function handleBlob(blob) {
+    if (!blob) { dl(); return; }
+    if (isMobile && navigator.share && navigator.canShare) {
+      try {
+        const file = new File([blob], filename, { type: "image/png" });
+        if (navigator.canShare({ files: [file] })) {
+          navigator.share({ files: [file], title: "강점발견 결과" }).catch(function () { dl(); });
+          return;
+        }
+      } catch (e) {}
+    }
+    dl();
+  }
+  // opts.copyToClipboard === true 이면 저장 대신 클립보드에 복사(콜백으로 성공/실패 통지)
+  if (opts && opts.copyToClipboard) {
+    var done = opts.onCopyDone;
+    if (!cv.toBlob || !navigator.clipboard || !window.ClipboardItem) { done && done(false); return; }
+    cv.toBlob(function (blob) {
+      if (!blob) { done && done(false); return; }
+      try {
+        navigator.clipboard.write([new ClipboardItem({ "image/png": blob })])
+          .then(function () { done && done(true); })
+          .catch(function () { done && done(false); });
+      } catch (e) { done && done(false); }
+    });
+    return;
+  }
+  if (cv.toBlob) cv.toBlob(handleBlob); else handleBlob(null);
 }
 function roundRect(ctx, x, y, w, hh, r) {
   ctx.beginPath();
